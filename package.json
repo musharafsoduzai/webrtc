@@ -1,0 +1,48 @@
+{
+  "name": "live-server",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon src/app.ts",
+    "build": "npx tsc && npm run copy-ejs",
+    "boot": "node build/app.js",
+    "start": "npm run build && npm run boot",
+    "wipe": "biome check --write --no-errors-on-unmatched --files-ignore-unknown=true ./src",
+    "prepare": "husky",
+    "copy-ejs": "npx cpx './src/**/*.ejs' ./build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "@types/express": "^5.0.0",
+    "@types/http-auth": "^4.1.4",
+    "@types/node-turn": "^0.0.5",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.2.10",
+    "nodemon": "^3.1.7",
+    "socket.io-client": "^4.8.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "cluster": "^0.7.7",
+    "dotenv": "^16.4.5",
+    "ejs": "^3.1.10",
+    "express": "^4.21.1",
+    "http-auth": "^4.2.0",
+    "log4js": "^6.9.1",
+    "node-turn": "^0.0.6",
+    "socket.io": "^4.8.1",
+    "streamroller": "^3.1.5",
+    "uuid": "^11.0.3",
+    "zod": "^3.23.8"
+  },
+  "lint-staged": {
+    "*": [
+      "npm run wipe"
+    ]
+  }
+}
