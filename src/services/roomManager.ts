@@ -153,22 +153,29 @@ class RoomManager {
     const room = this.rooms.get(roomId);
     if (!room) return null;
     console.log(
-      ` try to start a room with ${room.participants.size} participants`,
+      `Try to start a room with ${room.participants.size} participants`,
     );
 
     if (room.participants.size >= 2) {
+      // Enhanced WebRTC configuration with cross-platform compatibility
       const config = webrtcManager.getRtcConfig();
+
       console.log(
-        ` sent start room event to ${roomId} with ${room.participants.size} participants`,
+        `Sent start room event to ${roomId} with ${room.participants.size} participants`,
+        JSON.stringify(config),
       );
 
+      // Send the enhanced config to all participants
       socketManager.io.to(roomId).emit(SocketEvents.ROOM_START, config);
 
+      // Increased timeout to ensure devices are ready before initiating offer
       setTimeout(() => {
-        socketManager.io
-          .to(Array.from(room.participants)[0])
-          .emit(SocketEvents.ROOM_OFFER);
-      }, 1000);
+        const participants = Array.from(room.participants);
+        // Send offer request to the first participant
+        socketManager.io.to(participants[0]).emit(SocketEvents.ROOM_OFFER);
+
+        console.log(`Sent offer request to participant: ${participants[0]}`);
+      }, 3000); // Increased to 3000ms for better cross-device compatibility
     }
   }
 

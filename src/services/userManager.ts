@@ -16,8 +16,8 @@ function onUserConnected(socket: Socket) {
     username,
     isMobile:
       isMobile === "true" ? true : isMobile === "false" ? false : isMobile,
-    cameraOn: true,
-    audioOn: true,
+    cameraOn: cameraOn === "false" ? false : true,
+    audioOn: audioOn === "false" ? false : true,
   });
   if (!parsedUser.success) {
     console.log(
@@ -108,7 +108,7 @@ function onSignalReceived(socket: Socket, signal: unknown) {
   socket.to(roomId).emit(SocketEvents.SIGNAL, signal);
 }
 
-function onWebrtcAnswerReceived(socket: Socket, answer: string) {
+function onWebrtcAnswerReceived(socket: Socket, answer: any) {
   const user = users.getUserBySocketId(socket.id);
   if (!user) {
     socket.emit(
@@ -122,8 +122,26 @@ function onWebrtcAnswerReceived(socket: Socket, answer: string) {
     return socket.disconnect();
   }
   const userRoom = user.room;
+
+  let processedAnswer;
+  try {
+    if (typeof answer === "object" && answer.sdp) {
+      processedAnswer = {
+        type: answer.type,
+        sdp: user.isMobile ? ensureCompatibleSDP(answer.sdp) : answer.sdp,
+      };
+    } else {
+      throw new Error("Invalid answer format");
+    }
+  } catch (error) {
+    console.error("Error processing answer SDP:", error);
+    processedAnswer = answer;
+  }
+
   socket.to(userRoom).emit(SocketEvents.RTC_ANSWER, {
-    answer,
+    answer: processedAnswer,
+    cameraOn: user.cameraOn,
+    audioOn: user.audioOn,
   });
 }
 
@@ -149,7 +167,7 @@ function onWebrtcCandidateReceived(
   });
 }
 
-function onWebrtcOfferReceived(socket: Socket, offer: string) {
+function onWebrtcOfferReceived(socket: Socket, offer: any) {
   const user = users.getUserBySocketId(socket.id);
 
   if (!user) {
@@ -164,8 +182,26 @@ function onWebrtcOfferReceived(socket: Socket, offer: string) {
     return socket.disconnect();
   }
   const userRoom = user.room;
+
+  let processedOffer;
+  try {
+    if (typeof offer === "object" && offer.sdp) {
+      processedOffer = {
+        type: offer.type,
+        sdp: user.isMobile ? ensureCompatibleSDP(offer.sdp) : offer.sdp,
+      };
+    } else {
+      throw new Error("Invalid offer format");
+    }
+  } catch (error) {
+    console.error("Error processing offer SDP:", error);
+    processedOffer = offer;
+  }
+
   socket.to(userRoom).emit(SocketEvents.RTC_OFFER, {
-    offer,
+    offer: processedOffer,
+    cameraOn: user.cameraOn,
+    audioOn: user.audioOn,
   });
 }
 
@@ -219,6 +255,59 @@ function onDisconnect(socket: Socket) {
   }
 }
 
+function ensureCompatibleSDP(sdp: unknown): string {
+  if (!sdp || typeof sdp !== "string") {
+    console.warn("Invalid SDP received:", sdp);
+    return "";
+  }
+
+  try {
+    if (!sdp.includes("v=0") || !sdp.includes("m=")) {
+      console.warn("Invalid SDP format, returning original");
+      return sdp;
+    }
+
+    let modifiedSDP = sdp;
+
+    if (!modifiedSDP.includes("a=extmap-allow-mixed")) {
+      modifiedSDP = modifiedSDP.replace(
+        /m=video .*\r\n/,
+        "$&a=extmap-allow-mixed\r\n",
+      );
+    }
+
+    if (modifiedSDP.includes("m=audio")) {
+      const audioSection = modifiedSDP.split("m=audio")[1].split("m=")[0];
+      if (
+        audioSection.includes(" 111 ") &&
+        audioSection.includes("opus/48000")
+      ) {
+        modifiedSDP = modifiedSDP.replace(
+          /(m=audio \d+ [A-Z/]+ )(.*)/,
+          (match, p1, p2) => {
+            const codecs = p2.split(" ");
+            const opusIndex = codecs.findIndex((codec: string) =>
+              modifiedSDP.includes(`a=rtpmap:${codec} opus/48000`),
+            );
+            if (opusIndex > 0) {
+              const opusCodec = codecs[opusIndex];
+              codecs.splice(opusIndex, 1);
+              codecs.unshift(opusCodec);
+              return p1 + codecs.join(" ");
+            }
+            return match;
+          },
+        );
+      }
+    }
+
+    return modifiedSDP;
+  } catch (error) {
+    console.error("Error processing SDP:", error);
+    return sdp;
+  }
+}
+
 export const userManager = {
   onUserConnected,
   onRoomJoin,
@@ -230,4 +319,5 @@ export const userManager = {
   onMessageReceived,
   onStatusUpdate,
   onSignalReceived,
+  ensureCompatibleSDP, // Export for testing
 };
