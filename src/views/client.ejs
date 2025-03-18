@@ -184,7 +184,13 @@
        * @type {MediaStreamConstraints}
        */
       const mediaConstraints = {
-        video: true,
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30, max: 60 },
+          facingMode: { ideal: "user" },
+          aspectRatio: { ideal: 16 / 9 },
+        },
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -202,6 +208,19 @@
         username: "",
         isMobile: true,
         roomType: "",
+      };
+      rtcConfig = {
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+          { urls: "stun:stun2.l.google.com:19302" },
+          {
+            urls: "https://dev.specterman.io/specter/live",
+            credential: "password",
+            username: "username",
+          },
+        ],
+        sdpSemantics: "unified-plan", // Ensures iOS compatibility
       };
 
       // Function to handle screen sharing
@@ -298,48 +317,17 @@
       async function getUserMedia() {
         try {
           log("Accessing local media...");
-          try {
-            // First try with ideal constraints
-            localStream = await navigator.mediaDevices.getUserMedia(
-              mediaConstraints,
-            );
-          } catch (initialError) {
-            log(
-              "Initial media access failed, trying fallback: " +
-                initialError.message,
-            );
-            // Fallback to basic constraints if detailed ones fail
-            localStream = await navigator.mediaDevices.getUserMedia({
-              video: true,
-              audio: true,
-            });
-          }
-
+          localStream = await navigator.mediaDevices.getUserMedia(
+            mediaConstraints,
+          );
           localVideo.srcObject = localStream;
-
-          // Use play() in a user interaction context to avoid autoplay restrictions
-          try {
-            await localVideo.play();
-            log("Local media stream added.");
-          } catch (playError) {
-            log(`Error starting local video playback: ${playError.message}`);
-            // Show avatar as fallback
-            localAvatar.classList.remove("hidden");
-          }
+          localVideo.play().catch((err) => {
+            log(`Error starting local video playback: ${err.message}`);
+          });
+          log("Local media stream added.");
+          return localStream;
         } catch (error) {
           log("Error getting User Media: " + error.message);
-          // Show avatar when camera fails
-          localAvatar.classList.remove("hidden");
-          // Try to continue with audio only if video fails
-          try {
-            localStream = await navigator.mediaDevices.getUserMedia({
-              video: false,
-              audio: true,
-            });
-            log("Audio-only mode activated");
-          } catch (audioError) {
-            log("Failed to get audio: " + audioError.message);
-          }
         }
       }
 
@@ -347,21 +335,11 @@
         try {
           updateConnectionStatus("Connecting to the other user...");
           log("Creating RTCPeerConnection...");
-
-          // Add STUN/TURN servers for better NAT traversal
-          rtcConfig = {
-            iceServers: [
-              { urls: "stun:stun.l.google.com:19302" },
-              { urls: "stun:stun1.l.google.com:19302" },
-              { urls: "stun:stun2.l.google.com:19302" },
-              // Add TURN servers for production
-              // { urls: 'turn:your-turn-server.com', username: 'username', credential: 'credential' }
-            ],
-            iceCandidatePoolSize: 10,
-          };
-
           peerConnection = new RTCPeerConnection(rtcConfig);
-
+          if (!localStream) {
+            localStream = await getUserMedia();
+            if (!localStream) return;
+          }
           peerConnection.onconnectionstatechange = () => {
             if (peerConnection.connectionState === "connected") {
               updateConnectionStatus("Connected");
@@ -387,26 +365,12 @@
           };
 
           peerConnection.ontrack = (event) => {
-            if (event.streams && event.streams[0]) {
+            if (event.streams[0]) {
               remoteVideo.srcObject = event.streams[0];
               log("Remote stream received.");
               document
                 .getElementById("remote-status")
                 .classList.remove("hidden");
-
-              // Handle no video from remote
-              const hasVideo = event.streams[0].getVideoTracks().length > 0;
-              if (!hasVideo) {
-                remoteAvatar.classList.remove("hidden");
-              } else {
-                remoteAvatar.classList.add("hidden");
-                // Listen for when video tracks end
-                event.streams[0].getVideoTracks().forEach((track) => {
-                  track.onended = () => {
-                    remoteAvatar.classList.remove("hidden");
-                  };
-                });
-              }
             }
           };
 
@@ -428,7 +392,12 @@
 
         socket.emit("status:update", status);
       }
-
+      async function fixSDP(sessionDescription) {
+        let sdp = sessionDescription.sdp;
+        sdp = sdp.replace(/a=extmap:([^\r\n]*)\r\n/g, ""); // Removes Chrome-specific extensions
+        sessionDescription.sdp = sdp;
+        return sessionDescription;
+      }
       function attemptReconnect(peerConnection, rtcConfig) {
         if (peerConnection.restartIce) {
           log("peerConnection.restartIce");
@@ -466,11 +435,7 @@
         document.getElementById("controls").classList.remove("hidden");
 
         setInitials(localAvatar, username);
-        try {
-          await getUserMedia();
-        } catch (error) {
-          log("Could not get media, continuing with limited functionality");
-        }
+        await getUserMedia();
 
         log(`Hello, ${username}! Connecting to server...`);
         updateConnectionStatus("Waiting for user to join...");
@@ -529,21 +494,17 @@
         );
 
         socket.on("rtc:offer", async ({ offer }) => {
-          try {
-            if (!peerConnection) {
-              await initializeWebRTC();
-            }
-            await peerConnection.setRemoteDescription(
-              new RTCSessionDescription(offer),
-            );
-
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-
-            socket.emit("rtc:answer", { answer });
-          } catch (error) {
-            log("Error handling offer: " + error.message);
+          if (!peerConnection) {
+            await initializeWebRTC();
           }
+          await peerConnection.setRemoteDescription(
+            new RTCSessionDescription(offer),
+          );
+
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+
+          socket.emit("rtc:answer", { answer });
         });
 
         socket.on("rtc:answer", async ({ answer }) => {
@@ -613,20 +574,12 @@
 
       toggleCameraButton.addEventListener("click", () => {
         if (localStream) {
-          const videoTracks = localStream.getVideoTracks();
-          if (videoTracks.length > 0) {
-            const videoTrack = videoTracks[0];
+          const videoTrack = localStream.getVideoTracks()[0];
+          if (videoTrack) {
             videoTrack.enabled = !videoTrack.enabled;
             toggleCameraButton.textContent = videoTrack.enabled
               ? "Turn Off Camera"
               : "Turn On Camera";
-
-            // Show/hide avatar based on camera state
-            if (videoTrack.enabled) {
-              localAvatar.classList.add("hidden");
-            } else {
-              localAvatar.classList.remove("hidden");
-            }
           }
         }
         updateStatus();
@@ -655,6 +608,9 @@
 
       messageInput.addEventListener("keypress", (event) => {
         if (event.key === "Enter") sendMessageButton.click();
+      });
+      document.addEventListener("DOMContentLoaded", async () => {
+        await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       });
     </script>
   </body>

@@ -28,24 +28,20 @@ class SocketManager {
   }
 
   onConnection(socket: Socket) {
-    const iceServers = webrtcManager.getRtcConfig().iceServers;
-    socket.emit("updateIceServers", iceServers);
+    socket.emit("updateIceServers", webrtcManager.getRtcConfig().iceServers);
     userManager.onUserConnected(socket);
   }
 
   listenForSignalingEvents(socket: Socket) {
     socket.on(SocketEvents.RTC_OFFER, ({ offer }) => {
-      console.log("Received RTC offer");
       userManager.onWebrtcOfferReceived(socket, offer);
     });
 
     socket.on(SocketEvents.RTC_ANSWER, ({ answer }) => {
-      console.log("Received RTC answer");
       userManager.onWebrtcAnswerReceived(socket, answer);
     });
 
     socket.on(SocketEvents.RTC_CANDIDATE, ({ candidate }) => {
-      console.log("Received ICE candidate");
       userManager.onWebrtcCandidateReceived(socket, candidate);
     });
 

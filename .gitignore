@@ -38,4 +38,3 @@ build/**/*
 
 # ignore yarn.lock
 yarn.lock
-.vercel
