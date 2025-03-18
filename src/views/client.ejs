@@ -183,20 +183,7 @@
       /**
        * @type {MediaStreamConstraints}
        */
-      const mediaConstraints = {
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30, max: 60 },
-          facingMode: { ideal: "user" },
-          aspectRatio: { ideal: 16 / 9 },
-        },
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      };
+
       let socket;
       let peerConnection;
       let localStream;
@@ -215,14 +202,26 @@
           { urls: "stun:stun1.l.google.com:19302" },
           { urls: "stun:stun2.l.google.com:19302" },
           {
-            urls: "https://dev.specterman.io/specter/live",
+            urls: "turn:35.183.200.31:3478",
             credential: "password",
             username: "username",
           },
         ],
         sdpSemantics: "unified-plan", // Ensures iOS compatibility
       };
-
+      const mediaConstraints = {
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30 },
+          facingMode: "user",
+        },
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      };
       // Function to handle screen sharing
       async function toggleScreenShare() {
         if (!isScreenSharing) {
@@ -316,18 +315,14 @@
 
       async function getUserMedia() {
         try {
-          log("Accessing local media...");
+          console.log("Requesting access to camera & microphone...");
           localStream = await navigator.mediaDevices.getUserMedia(
             mediaConstraints,
           );
-          localVideo.srcObject = localStream;
-          localVideo.play().catch((err) => {
-            log(`Error starting local video playback: ${err.message}`);
-          });
-          log("Local media stream added.");
+          document.getElementById("local-video").srcObject = localStream;
           return localStream;
         } catch (error) {
-          log("Error getting User Media: " + error.message);
+          console.error("Error accessing camera/microphone:", error.message);
         }
       }
 
@@ -353,6 +348,16 @@
             }
           };
 
+          peerConnection.onnegotiationneeded = async () => {
+            if (isNegotiating) return;
+            isNegotiating = true;
+            setTimeout(() => (isNegotiating = false), 500); // Prevent double negotiation
+
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            socket.emit("rtc:offer", { offer });
+          };
+
           localStream.getTracks().forEach((track) => {
             peerConnection.addTrack(track, localStream);
           });
@@ -368,6 +373,8 @@
             if (event.streams[0]) {
               remoteVideo.srcObject = event.streams[0];
               log("Remote stream received.");
+              document.getElementById("remote-video").srcObject =
+                event.streams[0];
               document
                 .getElementById("remote-status")
                 .classList.remove("hidden");
@@ -392,11 +399,9 @@
 
         socket.emit("status:update", status);
       }
-      async function fixSDP(sessionDescription) {
-        let sdp = sessionDescription.sdp;
-        sdp = sdp.replace(/a=extmap:([^\r\n]*)\r\n/g, ""); // Removes Chrome-specific extensions
-        sessionDescription.sdp = sdp;
-        return sessionDescription;
+      async function fixSDP(sdp) {
+        sdp = sdp.replace(/a=extmap:([^\r\n]*)\r\n/g, ""); // Remove Chrome-specific extensions
+        return sdp;
       }
       function attemptReconnect(peerConnection, rtcConfig) {
         if (peerConnection.restartIce) {
@@ -611,6 +616,30 @@
       });
       document.addEventListener("DOMContentLoaded", async () => {
         await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      });
+
+      socket.on("rtc:offer", async ({ offer }) => {
+        await peerConnection.setRemoteDescription(
+          new RTCSessionDescription(offer),
+        );
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        socket.emit("rtc:answer", { answer });
+      });
+
+      socket.on("rtc:answer", async ({ answer }) => {
+        await peerConnection.setRemoteDescription(
+          new RTCSessionDescription(answer),
+        );
+      });
+
+      socket.on("rtc:candidate", async ({ candidate }) => {
+        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+      });
+
+      document.addEventListener("click", async () => {
+        if (!localStream) return;
+        localStream.getAudioTracks().forEach((track) => (track.enabled = true));
       });
     </script>
   </body>
