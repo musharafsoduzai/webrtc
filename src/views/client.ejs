@@ -315,18 +315,20 @@
 
       async function getUserMedia() {
         try {
-          console.log("Requesting access to camera & microphone...");
+          console.log("Requesting Camera & Microphone...");
           localStream = await navigator.mediaDevices.getUserMedia(
             mediaConstraints,
           );
           document.getElementById("local-video").srcObject = localStream;
-          return localStream;
         } catch (error) {
-          console.error("Error accessing camera/microphone:", error.message);
+          console.error("Camera/Microphone Error:", error.message);
         }
       }
 
       async function initializeWebRTC() {
+        if (peerConnection) {
+          peerConnection.close(); // 🔥 Ensure Clean Connection
+        }
         try {
           updateConnectionStatus("Connecting to the other user...");
           log("Creating RTCPeerConnection...");
@@ -368,20 +370,7 @@
               socket.emit("rtc:candidate", { candidate: event.candidate });
             }
           };
-
-          peerConnection.ontrack = (event) => {
-            if (event.streams[0]) {
-              remoteVideo.srcObject = event.streams[0];
-              log("Remote stream received.");
-              document.getElementById("remote-video").srcObject =
-                event.streams[0];
-              document
-                .getElementById("remote-status")
-                .classList.remove("hidden");
-            }
-          };
-
-          log("WebRTC initialized.");
+          console.log("WebRTC Initialized.");
         } catch (error) {
           log("Error initializing WebRTC: " + error.message);
           updateConnectionStatus("Waiting for other user");
@@ -640,6 +629,10 @@
       document.addEventListener("click", async () => {
         if (!localStream) return;
         localStream.getAudioTracks().forEach((track) => (track.enabled = true));
+      });
+
+      document.addEventListener("DOMContentLoaded", async () => {
+        await getUserMedia(); // Get camera/mic access before call
       });
     </script>
   </body>
