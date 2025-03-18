@@ -326,9 +326,6 @@
       }
 
       async function initializeWebRTC() {
-        if (peerConnection) {
-          peerConnection.close(); // 🔥 Ensure Clean Connection
-        }
         try {
           updateConnectionStatus("Connecting to the other user...");
           log("Creating RTCPeerConnection...");
@@ -370,7 +367,20 @@
               socket.emit("rtc:candidate", { candidate: event.candidate });
             }
           };
-          console.log("WebRTC Initialized.");
+
+          peerConnection.ontrack = (event) => {
+            if (event.streams[0]) {
+              remoteVideo.srcObject = event.streams[0];
+              log("Remote stream received.");
+              document.getElementById("remote-video").srcObject =
+                event.streams[0];
+              document
+                .getElementById("remote-status")
+                .classList.remove("hidden");
+            }
+          };
+
+          log("WebRTC initialized.");
         } catch (error) {
           log("Error initializing WebRTC: " + error.message);
           updateConnectionStatus("Waiting for other user");
@@ -629,10 +639,6 @@
       document.addEventListener("click", async () => {
         if (!localStream) return;
         localStream.getAudioTracks().forEach((track) => (track.enabled = true));
-      });
-
-      document.addEventListener("DOMContentLoaded", async () => {
-        await getUserMedia(); // Get camera/mic access before call
       });
     </script>
   </body>
