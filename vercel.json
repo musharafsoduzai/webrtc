@@ -1,0 +1,9 @@
+{
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/build/app.js"
+    }
+  ],
+  "outputDirectory": "build"
+}
