@@ -342,11 +342,7 @@
 
           // Use very basic constraints for maximum compatibility
           const simpleConstraints = {
-            video: {
-              width: { ideal: 320 },
-              height: { ideal: 240 },
-              frameRate: { max: 15 },
-            },
+            video: true,
             audio: true,
           };
 
@@ -365,21 +361,6 @@
           log("Local media stream added.");
         } catch (error) {
           log("Error getting User Media: " + error.message);
-          try {
-            // Fallback to absolute minimum constraints
-            localStream = await navigator.mediaDevices.getUserMedia({
-              video: true,
-              audio: true,
-            });
-            localVideo.srcObject = localStream;
-            await localVideo.play();
-            log("Local media stream added with fallback constraints.");
-          } catch (fallbackError) {
-            log(
-              "Error getting User Media with fallback: " +
-                fallbackError.message,
-            );
-          }
         }
       }
 
@@ -388,19 +369,9 @@
           updateConnectionStatus("Connecting to the other user...");
           log("Creating RTCPeerConnection...");
 
-          // Combine provided config with our ice servers
-          const combinedConfig = {
-            ...rtcConfig,
-            iceServers: [
-              ...(rtcConfig.iceServers || []),
-              ...iceServers.iceServers,
-            ],
-            iceCandidatePoolSize: 10,
-          };
+          // Use our predefined ice servers
+          peerConnection = new RTCPeerConnection(iceServers);
 
-          peerConnection = new RTCPeerConnection(combinedConfig);
-
-          // Add all connection state change handlers
           peerConnection.onconnectionstatechange = () => {
             log("Connection state changed: " + peerConnection.connectionState);
             if (peerConnection.connectionState === "connected") {
@@ -488,24 +459,13 @@
 
           document.getElementById("remote-status").classList.remove("hidden");
 
-          // Add event listeners
-          remoteVideo.addEventListener("loadedmetadata", () => {
-            log("Remote video metadata loaded");
-            setTimeout(() => {
-              playRemoteVideo();
-              // Create a play button as a fallback
-              createPlayButton();
-            }, 1000);
-          });
+          // Create a play button immediately for mobile devices
+          createPlayButton();
 
-          // Monitor the remote stream for track changes
-          stream.addEventListener("addtrack", (event) => {
-            log("New track added to remote stream: " + event.track.kind);
-          });
-
-          stream.addEventListener("removetrack", (event) => {
-            log("Track removed from remote stream: " + event.track.kind);
-          });
+          // Try to play the video automatically
+          setTimeout(() => {
+            playRemoteVideo();
+          }, 1000);
         }
       }
 
