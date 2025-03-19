@@ -13,6 +13,8 @@ import { users } from "./models/Users";
 import { RoomType, rooms } from "./services/roomManager";
 import socketManager from "./services/socketManager";
 import webrtcManager from "./services/webrtcManager";
+import https from "https";
+import fs from "fs";
 
 if (cluster.isPrimary) {
   console.log(`Primary process ${process.pid} is running`);
@@ -59,7 +61,21 @@ function startMainApp() {
       next();
     })(req, res);
   };
-  const httpServer = http.createServer(app);
+  
+  let httpServer;
+  
+  // Try to use HTTPS if certificates exist, otherwise fall back to HTTP
+  try {
+    const httpsOptions = {
+      key: fs.readFileSync(path.join(__dirname, 'security/key.pem')),
+      cert: fs.readFileSync(path.join(__dirname, 'security/cert.pem'))
+    };
+    httpServer = https.createServer(httpsOptions, app);
+    console.log("HTTPS server created successfully");
+  } catch (error) {
+    console.log("SSL certificates not found, falling back to HTTP (WebRTC may not work on mobile devices)");
+    httpServer = http.createServer(app);
+  }
 
   app.use(express.static(path.join(__dirname, "public")));
   app.set("view engine", "ejs");

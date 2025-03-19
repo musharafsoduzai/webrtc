@@ -4,7 +4,9 @@ class WebrtcManager {
   rtcConfig: RTCConfiguration = {
     iceServers: [
       {
-        urls: ["stun:stun.l.google.com:19302"],
+        urls: [ENV.ICE_SERVER_URL],
+        credential: "password",
+        username: "username",
       },
       {
         urls: ENV.ICE_SERVER_URL,

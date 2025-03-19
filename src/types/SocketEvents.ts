@@ -2,7 +2,7 @@ export enum SocketEvents {
   CONNECTION = "connection",
   DISCONNECT = "disconnect",
   DISCONNECTING = "disconnecting",
-
+  
   ERROR = "error",
   ROOM_JOIN = "room:join",
   ROOM_LEAVE = "room:leave",
