@@ -16,24 +16,6 @@ class WebrtcManager {
     iceTransportPolicy: "all",
   };
 
-  /**
-   * Media constraints for WebRTC connections
-   */
-  mediaConstraints: MediaStreamConstraints = {
-    video: {
-      width: { ideal: 1280, max: 1920 },
-      height: { ideal: 720, max: 1080 },
-      frameRate: { ideal: 30, max: 60 },
-      facingMode: { ideal: "user" }, // Ensure front camera is used
-      aspectRatio: { ideal: 16 / 9 },
-    },
-    audio: {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-    },
-  };
-
   getRtcConfig() {
     return this.rtcConfig;
   }

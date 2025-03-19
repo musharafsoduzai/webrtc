@@ -64,7 +64,6 @@
       .video-wrapper {
         position: relative;
         display: inline-block;
-        background-color: #000;
       }
 
       #controls button {
@@ -85,30 +84,6 @@
 
       #message-input button {
         padding: 5px 10px;
-      }
-
-      #remote-video {
-        object-fit: cover;
-      }
-
-      .remote-status-indicator {
-        position: absolute;
-        top: 5px;
-        right: 5px;
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        background-color: red;
-        z-index: 2;
-      }
-
-      .remote-status-indicator.connected {
-        background-color: green;
-      }
-
-      .video-wrapper:nth-child(2) {
-        min-height: 200px;
-        min-width: 300px;
       }
     </style>
   </head>
@@ -209,31 +184,23 @@
        * @type {MediaStreamConstraints}
        */
       const mediaConstraints = {
-        video: true,
-        audio: true,
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          frameRate: { ideal: 30, max: 60 },
+          facingMode: { ideal: "user" },
+          aspectRatio: { ideal: 4 / 3 },
+        },
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
       };
-
       let socket;
       let peerConnection;
       let localStream;
-      let rtcConfig = {
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-          { urls: "stun:stun2.l.google.com:19302" },
-          {
-            urls: "turn:global.turn.twilio.com:3478?transport=udp",
-            username:
-              "f4b4035eaa76f77e3b3f90eda80ce6daa4d9c7dfa3d97745a089b4ec",
-            credential: "dECYpK/WYXVxGFHK8uEXza7hRMmXmLKI9JjvtG4nF9Y=",
-          },
-        ],
-        iceCandidatePoolSize: 10,
-        bundlePolicy: "max-bundle",
-        rtcpMuxPolicy: "require",
-        iceTransportPolicy: "all",
-      };
-
+      let rtcConfig = {};
       let participants = [];
       const user = {
         id: new Date().getTime(),
@@ -243,27 +210,34 @@
         roomType: "",
       };
 
-      let remoteStreamBackup = null;
-      let videoFixAttempts = 0;
-      const MAX_FIX_ATTEMPTS = 5;
-
       // Function to handle screen sharing
       async function toggleScreenShare() {
         if (!isScreenSharing) {
           try {
+            // Start screen sharing
             screenStream = await navigator.mediaDevices.getDisplayMedia({
               video: true,
             });
+
+            // Replace the current video track with the screen track
             const screenTrack = screenStream.getVideoTracks()[0];
             const sender = peerConnection
               .getSenders()
               .find((s) => s.track.kind === "video");
             if (sender) sender.replaceTrack(screenTrack);
+
+            // Update the local video element
             localVideo.srcObject = screenStream;
+
+            screenTrack.onended = () => {
+              // Automatically stop screen sharing when the user stops sharing
+              stopScreenShare();
+            };
+
             isScreenSharing = true;
-            console.log("Screen sharing started.");
+            shareScreenButton.textContent = "Stop Sharing";
           } catch (error) {
-            console.error("Screen sharing failed:", error);
+            log("Screen sharing failed: " + error.message);
           }
         } else {
           stopScreenShare();
@@ -330,73 +304,69 @@
       async function getUserMedia() {
         try {
           log("Accessing local media...");
-
-          try {
-            // First try with video and audio
-            localStream = await navigator.mediaDevices.getUserMedia({
-              video: true,
-              audio: true,
-            });
-            log("Camera and microphone access successful");
-          } catch (err) {
-            log("Full media access failed: " + err.message);
-
-            try {
-              // Try with just audio if video fails
-              localStream = await navigator.mediaDevices.getUserMedia({
-                video: false,
-                audio: true,
-              });
-              log("Audio-only access successful");
-              localAvatar.classList.remove("hidden");
-            } catch (audioErr) {
-              log("Audio access also failed: " + audioErr.message);
-              throw new Error("Could not access any media devices");
-            }
-          }
-
-          if (localStream) {
-            localVideo.srcObject = localStream;
-
-            // Check if we have video tracks
-            if (localStream.getVideoTracks().length > 0) {
-              log(`Got video track: ${localStream.getVideoTracks()[0].label}`);
-              localAvatar.classList.add("hidden");
-            } else {
-              log("No video tracks available");
-              localAvatar.classList.remove("hidden");
-            }
-
-            // Try to play the video
-            try {
-              await localVideo.play();
-            } catch (playErr) {
-              log("Video play error: " + playErr.message);
-              // Continue anyway as this might be an autoplay restriction
-            }
-          }
-
-          // Only call updateStatus if socket is defined
-          if (socket) {
-            updateStatus();
-          }
-        } catch (error) {
-          log("Media access completely failed: " + error.message);
-          localAvatar.classList.remove("hidden");
-          // Don't use alert here as it blocks the UI
-          updateConnectionStatus(
-            "Camera access failed. Please check permissions.",
+          localStream = await navigator.mediaDevices.getUserMedia(
+            mediaConstraints,
           );
+          localVideo.srcObject = localStream;
+          localVideo.play().catch((err) => {
+            log(`Error starting local video playback: ${err.message}`);
+          });
+          log("Local media stream added.");
+        } catch (error) {
+          log("Error getting User Media: " + error.message);
+        }
+      }
+
+      async function initializeWebRTC() {
+        try {
+          updateConnectionStatus("Connecting to the other user...");
+          log("Creating RTCPeerConnection...");
+          peerConnection = new RTCPeerConnection(rtcConfig);
+
+          peerConnection.onconnectionstatechange = () => {
+            if (peerConnection.connectionState === "connected") {
+              updateConnectionStatus("Connected");
+            }
+          };
+
+          peerConnection.oniceconnectionstatechange = () => {
+            if (peerConnection.iceConnectionState === "disconnected") {
+              log("Disconnected. Attempting to reconnect...");
+              attemptReconnect(peerConnection, rtcConfig);
+            }
+          };
+
+          localStream.getTracks().forEach((track) => {
+            peerConnection.addTrack(track, localStream);
+          });
+
+          peerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+              log("Sending ICE candidate...");
+              socket.emit("rtc:candidate", { candidate: event.candidate });
+            }
+          };
+
+          peerConnection.ontrack = (event) => {
+            if (event.streams[0]) {
+              remoteVideo.srcObject = event.streams[0];
+              log("Remote stream received.");
+              document
+                .getElementById("remote-status")
+                .classList.remove("hidden");
+            } else {
+              log("No remote stream available.");
+            }
+          };
+
+          log("WebRTC initialized.");
+        } catch (error) {
+          log("Error initializing WebRTC: " + error.message);
+          updateConnectionStatus("Waiting for other user");
         }
       }
 
       function updateStatus() {
-        // Check if socket exists before trying to emit
-        if (!socket) {
-          log("Warning: Cannot update status - socket not initialized");
-          return;
-        }
-
         const videoTrack = localStream?.getVideoTracks()[0];
         const audioTrack = localStream?.getAudioTracks()[0];
 
@@ -408,323 +378,14 @@
         socket.emit("status:update", status);
       }
 
-      // Store received ICE candidates until we can process them
-      let pendingIceCandidates = [];
-
-      async function initializeWebRTC() {
-        try {
-          updateConnectionStatus("Connecting to the other user...");
-          log("Creating RTCPeerConnection...");
-
-          // Close any existing connection
-          if (peerConnection) {
-            peerConnection.close();
-          }
-
-          // Create new connection with our config
-          peerConnection = new RTCPeerConnection(rtcConfig);
-
-          peerConnection.onconnectionstatechange = () => {
-            log(`Connection state changed: ${peerConnection.connectionState}`);
-            if (peerConnection.connectionState === "connected") {
-              updateConnectionStatus("Connected");
-
-              // Process any pending ICE candidates
-              processPendingIceCandidates();
-            } else if (peerConnection.connectionState === "failed") {
-              log("Connection failed. Attempting to restart...");
-              restartConnection();
-            }
-          };
-
-          peerConnection.oniceconnectionstatechange = () => {
-            log(`ICE connection state: ${peerConnection.iceConnectionState}`);
-            if (
-              peerConnection.iceConnectionState === "disconnected" ||
-              peerConnection.iceConnectionState === "failed"
-            ) {
-              log("ICE connection issue. Attempting to restart...");
-              restartConnection();
-            }
-          };
-
-          // Add all tracks from local stream to peer connection connection
-          if (localStream) {
-            localStream.getTracks().forEach((track) => {
-              log(`Adding ${track.kind} track to peer connection`);
-              peerConnection.addTrack(track, localStream);
-            });
-          } else {
-            log("Warning: No local stream to add to peer connection");
-          }
-
-          peerConnection.onicecandidate = (event) => {
-            if (event.candidate) {
-              log(`ICE candidate generated`);
-              if (socket) {
-                socket.emit("rtc:candidate", { candidate: event.candidate });
-              } else {
-                log(
-                  "Warning: Cannot send ICE candidate - socket not initialized",
-                );
-              }
-            } else {
-              log("ICE candidate gathering complete");
-            }
-          };
-
-          peerConnection.ontrack = (event) => {
-            log(`Remote track received: ${event.track.kind}`);
-
-            if (event.streams && event.streams[0]) {
-              const remoteStream = event.streams[0];
-
-              if (!remoteVideo.srcObject) {
-                remoteVideo.srcObject = remoteStream;
-                remoteVideo.playsInline = true;
-                remoteVideo.muted = false;
-
-                remoteVideo.onloadedmetadata = () => {
-                  log("Remote video metadata loaded");
-                  playRemoteVideo();
-                };
-
-                remoteVideo.onerror = (e) => {
-                  log(
-                    `Remote video error: ${
-                      e.target.error?.message || "Unknown error"
-                    }`,
-                  );
-                };
-              }
-
-              if (event.track.kind === "video") {
-                remoteAvatar.classList.add("hidden");
-                log("Remote video track connected");
-                logRemoteVideoStatus();
-
-                const videoCheckInterval = setInterval(() => {
-                  if (!remoteVideo.srcObject) {
-                    clearInterval(videoCheckInterval);
-                    return;
-                  }
-
-                  logRemoteVideoStatus();
-
-                  if (
-                    remoteVideo.videoWidth === 0 &&
-                    remoteVideo.videoHeight === 0
-                  ) {
-                    log("Attempting to fix zero-dimension video");
-                    fixRemoteVideo(remoteStream);
-                  }
-                }, 2000);
-              } else {
-                log("Remote audio track connected");
-              }
-
-              document
-                .getElementById("remote-status")
-                .classList.remove("hidden");
-
-              event.track.onmute = () => {
-                log(`Remote ${event.track.kind} muted`);
-                if (event.track.kind === "video") {
-                  remoteAvatar.classList.remove("hidden");
-                }
-              };
-
-              event.track.onunmute = () => {
-                log(`Remote ${event.track.kind} unmuted`);
-                if (event.track.kind === "video") {
-                  remoteAvatar.classList.add("hidden");
-                  playRemoteVideo();
-                }
-              };
-
-              event.track.onended = () => {
-                log(`Remote ${event.track.kind} ended`);
-                if (event.track.kind === "video") {
-                  remoteAvatar.classList.remove("hidden");
-                }
-              };
-            }
-          };
-
-          log("WebRTC initialized successfully.");
-
-          // Process any pending ICE candidates that were received before initialization
-          processPendingIceCandidates();
-        } catch (error) {
-          log("Error initializing WebRTC: " + error.message);
-          updateConnectionStatus("Connection error. Please try again.");
-        }
-      }
-
-      // Process any pending ICE candidates
-      async function processPendingIceCandidates() {
-        if (
-          peerConnection &&
-          peerConnection.remoteDescription &&
-          pendingIceCandidates.length > 0
-        ) {
-          log(
-            `Processing ${pendingIceCandidates.length} pending ICE candidates`,
-          );
-
-          for (const candidate of pendingIceCandidates) {
-            try {
-              await peerConnection.addIceCandidate(
-                new RTCIceCandidate(candidate),
-              );
-              log("Successfully added pending ICE candidate");
-            } catch (err) {
-              log("Error adding pending ICE candidate: " + err.message);
-            }
-          }
-
-          // Clear the pending candidates
-          pendingIceCandidates = [];
-        }
-      }
-
-      // Function to completely restart the connection
-      async function restartConnection() {
-        try {
-          log("Restarting connection...");
-
-          // Close existing connection
-          if (peerConnection) {
-            peerConnection.close();
-            peerConnection = null;
-          }
-
-          // Clear pending candidates
-          pendingIceCandidates = [];
-
-          // Reinitialize WebRTC
-          await initializeWebRTC();
-
-          // Notify server to restart the connection process
-          if (socket) {
-            socket.emit("connection:restart");
-          } else {
-            log(
-              "Warning: Cannot request connection restart - socket not initialized",
-            );
-          }
-
-          updateConnectionStatus("Reconnecting...");
-        } catch (error) {
-          log("Error during connection restart: " + error.message);
-        }
-      }
-
-      // Simplified reconnect attempt
-      function attemptReconnect() {
-        log("Attempting to reconnect...");
-        if (peerConnection && peerConnection.restartIce) {
+      function attemptReconnect(peerConnection, rtcConfig) {
+        if (peerConnection.restartIce) {
+          log("peerConnection.restartIce");
           peerConnection.restartIce();
-          log("ICE restart initiated");
         } else {
-          restartConnection();
-        }
-      }
-
-      function logRemoteVideoStatus() {
-        if (!remoteVideo.srcObject) {
-          log("Remote video has no srcObject");
-          return;
-        }
-
-        const videoTracks = remoteVideo.srcObject.getVideoTracks();
-        log(`Remote video has ${videoTracks.length} video tracks`);
-
-        if (videoTracks.length > 0) {
-          const track = videoTracks[0];
-          log(
-            `Remote video track: enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`,
-          );
-        }
-
-        log(
-          `Remote video dimensions: ${remoteVideo.videoWidth}x${remoteVideo.videoHeight}`,
-        );
-        log(`Remote video paused: ${remoteVideo.paused}`);
-      }
-
-      function playRemoteVideo() {
-        if (!remoteVideo.srcObject) return;
-
-        if (remoteVideo.paused) {
-          log("Attempting to play remote video");
-
-          remoteVideo
-            .play()
-            .then(() => {
-              log("Remote video playing successfully");
-            })
-            .catch((err) => {
-              log(`Remote video play error: ${err.message}`);
-
-              if (err.name === "NotAllowedError") {
-                showPlayButton();
-              }
-            });
-        }
-      }
-
-      function fixRemoteVideo(stream) {
-        log("Applying fix for remote video display");
-
-        const oldStream = remoteVideo.srcObject;
-        remoteVideo.srcObject = null;
-
-        remoteVideo.offsetHeight;
-
-        setTimeout(() => {
-          remoteVideo.srcObject = stream;
-
-          remoteVideo
-            .play()
-            .then(() => log("Reattached remote video is playing"))
-            .catch((err) => log(`Reattach play error: ${err.message}`));
-        }, 100);
-      }
-
-      function showPlayButton() {
-        if (!document.getElementById("manual-play-button")) {
-          const playButton = document.createElement("button");
-          playButton.id = "manual-play-button";
-          playButton.textContent = "Tap to Play Video";
-          playButton.style.position = "absolute";
-          playButton.style.top = "50%";
-          playButton.style.left = "50%";
-          playButton.style.transform = "translate(-50%, -50%)";
-          playButton.style.zIndex = "10";
-          playButton.style.padding = "10px";
-          playButton.style.backgroundColor = "#007bff";
-          playButton.style.color = "white";
-          playButton.style.border = "none";
-          playButton.style.borderRadius = "5px";
-
-          playButton.onclick = () => {
-            remoteVideo
-              .play()
-              .then(() => {
-                log("Manual play successful");
-                playButton.style.display = "none";
-              })
-              .catch((err) => log(`Manual play error: ${err.message}`));
-          };
-
-          const videoWrapper = document.querySelector(
-            ".video-wrapper:nth-child(2)",
-          );
-          videoWrapper.style.position = "relative";
-          videoWrapper.appendChild(playButton);
-        } else {
-          document.getElementById("manual-play-button").style.display = "block";
+          log("Re-Initialize WebRTC");
+          peerConnection.close();
+          initializeWebRTC();
         }
       }
 
@@ -754,44 +415,16 @@
         document.getElementById("controls").classList.remove("hidden");
 
         setInitials(localAvatar, username);
-
-        // Show loading indicator
-        updateConnectionStatus("Initializing camera...");
-
         await getUserMedia();
 
         log(`Hello, ${username}! Connecting to server...`);
-        updateConnectionStatus("Connecting to server...");
+        updateConnectionStatus("Waiting for user to join...");
 
-        socket = io(LIVE_SERVER_URL, {
-          query: user,
-          reconnectionAttempts: 5,
-          reconnectionDelay: 1000,
-          timeout: 20000,
-        });
-
-        // Now that socket is initialized, update status
-        updateStatus();
+        socket = io(LIVE_SERVER_URL, { query: user });
 
         socket.on("connect", () => {
           log("Connected to the server.");
           socket.emit("room:join", { roomType });
-        });
-
-        socket.on("connect_error", (error) => {
-          log("Connection error: " + error.message);
-          updateConnectionStatus("Server connection failed. Please try again.");
-        });
-
-        socket.on("reconnect", (attemptNumber) => {
-          log(`Reconnected to server after ${attemptNumber} attempts`);
-          socket.emit("room:join", { roomType });
-        });
-
-        // Add handler for connection restart request
-        socket.on("connection:restart", async () => {
-          log("Received restart request from server");
-          await restartConnection();
         });
 
         socket.on("user:left", () => {
@@ -863,21 +496,10 @@
         });
 
         socket.on("rtc:candidate", async ({ candidate }) => {
-          if (peerConnection && peerConnection.remoteDescription) {
-            try {
-              log("Adding ICE candidate from remote peer");
-              await peerConnection.addIceCandidate(
-                new RTCIceCandidate(candidate),
-              );
-            } catch (err) {
-              log("Error adding received ICE candidate: " + err.message);
-            }
-          } else {
-            log(
-              "Received ICE candidate but peer connection not ready - storing for later",
+          if (peerConnection) {
+            await peerConnection.addIceCandidate(
+              new RTCIceCandidate(candidate),
             );
-            // Store the candidate for later processing
-            pendingIceCandidates.push(candidate);
           }
         });
 
@@ -967,16 +589,6 @@
       messageInput.addEventListener("keypress", (event) => {
         if (event.key === "Enter") sendMessageButton.click();
       });
-
-      // Function to handle video play errors
-      function handleVideoPlayError(videoElement) {
-        videoElement.addEventListener("error", (event) => {
-          log(`Video play error: ${event.message}`);
-        });
-      }
-
-      // Call this function after setting the video source
-      handleVideoPlayError(remoteVideo);
     </script>
   </body>
 </html>
