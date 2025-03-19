@@ -212,6 +212,7 @@
       // Track if we've already set up the remote video to avoid duplicate setup
       let remoteVideoSetup = false;
       let remoteStream = null;
+      let remoteVideoElement = null;
 
       // Define STUN and TURN servers for better connectivity
       const iceServers = {
@@ -463,7 +464,7 @@
             }
           };
 
-          // Handle incoming tracks
+          // Handle incoming tracks - COMPLETELY NEW APPROACH
           peerConnection.ontrack = (event) => {
             log("Track received: " + event.track.kind);
 
@@ -484,8 +485,11 @@
                 );
               });
 
-              // Set up the remote video
-              setupRemoteVideo(remoteStream);
+              // Only set up video for video tracks
+              if (event.track.kind === "video") {
+                // Use a completely different approach for handling the video
+                handleRemoteVideoTrack(event.track, event.streams[0]);
+              }
             } else {
               log("No remote stream available in the track event");
             }
@@ -498,93 +502,110 @@
         }
       }
 
-      // Function to set up the remote video
-      function setupRemoteVideo(stream) {
-        log(
-          "Setting up remote video with stream that has " +
-            stream.getTracks().length +
-            " tracks",
+      // New function to handle remote video tracks
+      function handleRemoteVideoTrack(videoTrack, stream) {
+        log("Handling remote video track");
+
+        // Remove any existing video elements
+        const existingVideo = document.querySelector(
+          "#remote-video-container video",
         );
-
-        // Check if video tracks exist
-        const videoTracks = stream.getVideoTracks();
-        if (videoTracks.length === 0) {
-          log("WARNING: No video tracks in remote stream!");
-        } else {
-          log("Remote stream has " + videoTracks.length + " video tracks");
-          videoTracks.forEach((track) => {
-            log("Video track settings: " + JSON.stringify(track.getSettings()));
-            log("Video track enabled: " + track.enabled);
-            log("Video track muted: " + track.muted);
-
-            // Ensure track is enabled
-            track.enabled = true;
-          });
+        if (existingVideo) {
+          existingVideo.srcObject = null;
+          existingVideo.remove();
         }
 
-        // Set the source directly on the existing video element
-        remoteVideo.srcObject = stream;
-        remoteVideo.playsInline = true; // Important for iOS
-        remoteVideo.muted = false;
+        // Create a new container if it doesn't exist
+        let container = document.querySelector("#remote-video-container");
+        if (!container) {
+          container = document.createElement("div");
+          container.id = "remote-video-container";
+          container.style.width = "100%";
+          container.style.height = "100%";
+          container.style.position = "relative";
+          container.style.backgroundColor = "#000";
 
-        // Make sure remote video is visible
-        remoteVideo.style.display = "block";
-        remoteVideo.style.backgroundColor = "#000";
+          // Replace the remote video element with this container
+          const remoteVideoParent =
+            document.querySelector("#remote-video").parentElement;
+          remoteVideoParent.appendChild(container);
+          document.querySelector("#remote-video").style.display = "none";
+        }
 
-        document.getElementById("remote-status").classList.remove("hidden");
+        // Create a new video element
+        const newVideo = document.createElement("video");
+        newVideo.autoplay = true;
+        newVideo.playsInline = true;
+        newVideo.muted = false;
+        newVideo.style.width = "100%";
+        newVideo.style.height = "100%";
+        newVideo.style.objectFit = "cover";
 
-        // Create a play button for mobile devices
-        createPlayButton();
+        // Add the video element to the container
+        container.appendChild(newVideo);
 
-        // Try to play the video automatically
-        playRemoteVideo();
+        // Store reference to the new video element
+        remoteVideoElement = newVideo;
 
-        // Add event listeners to monitor video state
-        remoteVideo.addEventListener("loadedmetadata", () => {
+        // Create a new MediaStream with just this video track
+        const newStream = new MediaStream([videoTrack]);
+
+        // Set the source
+        newVideo.srcObject = newStream;
+
+        // Add event listeners
+        newVideo.addEventListener("loadedmetadata", () => {
           log("Remote video metadata loaded");
-          setTimeout(playRemoteVideo, 500);
+          playVideo(newVideo);
         });
 
-        remoteVideo.addEventListener("playing", () => {
+        newVideo.addEventListener("playing", () => {
           log("Remote video is playing");
-          const playButton = document.querySelector(".manual-play-button");
-          if (playButton) playButton.style.display = "none";
+          document.getElementById("remote-status").classList.remove("hidden");
         });
+
+        // Create a play button
+        createPlayButton(container, newVideo);
+
+        // Try to play immediately
+        playVideo(newVideo);
       }
 
-      // Function to safely play the remote video
-      function playRemoteVideo() {
-        if (remoteVideo && remoteVideo.paused && remoteVideo.srcObject) {
-          log("Attempting to play remote video...");
+      // Function to safely play a video element
+      function playVideo(videoElement) {
+        if (videoElement && videoElement.paused) {
+          log("Attempting to play video...");
 
-          // Ensure it's not muted
-          remoteVideo.muted = false;
-
-          // Try to play
-          remoteVideo
+          videoElement
             .play()
             .then(() => {
-              log("Remote video is now playing");
+              log("Video is now playing");
+              // Hide play button if it exists
+              const playButton = document.querySelector(".manual-play-button");
+              if (playButton) playButton.style.display = "none";
             })
             .catch((err) => {
-              log("Error playing remote video: " + err.message);
-              // Make the play button visible
-              const existingButton = document.querySelector(
-                ".manual-play-button",
-              );
-              if (existingButton) {
-                existingButton.style.display = "block";
-              } else {
-                createPlayButton();
+              log("Error playing video: " + err.message);
+              // Show play button
+              const container = videoElement.parentElement;
+              if (container) {
+                const existingButton = container.querySelector(
+                  ".manual-play-button",
+                );
+                if (existingButton) {
+                  existingButton.style.display = "block";
+                } else {
+                  createPlayButton(container, videoElement);
+                }
               }
             });
         }
       }
 
       // Add a button to manually play the video
-      function createPlayButton() {
+      function createPlayButton(container, videoElement) {
         // Remove any existing buttons first
-        const existingButton = document.querySelector(".manual-play-button");
+        const existingButton = container.querySelector(".manual-play-button");
         if (existingButton) existingButton.remove();
 
         const playButton = document.createElement("button");
@@ -603,14 +624,11 @@
         playButton.style.cursor = "pointer";
 
         playButton.onclick = () => {
-          playRemoteVideo();
+          playVideo(videoElement);
+          playButton.style.display = "none";
         };
 
-        const remoteVideoWrapper =
-          document.querySelector("#remote-video").parentElement;
-        if (remoteVideoWrapper) {
-          remoteVideoWrapper.appendChild(playButton);
-        }
+        container.appendChild(playButton);
       }
 
       function updateStatus() {
@@ -818,14 +836,14 @@
         document.addEventListener("DOMContentLoaded", () => {
           // Add event listeners to handle autoplay restrictions
           document.addEventListener("click", function () {
-            if (remoteVideo && remoteVideo.paused && remoteVideo.srcObject) {
-              playRemoteVideo();
+            if (remoteVideoElement && remoteVideoElement.paused) {
+              playVideo(remoteVideoElement);
             }
           });
 
           document.addEventListener("touchstart", function () {
-            if (remoteVideo && remoteVideo.paused && remoteVideo.srcObject) {
-              playRemoteVideo();
+            if (remoteVideoElement && remoteVideoElement.paused) {
+              playVideo(remoteVideoElement);
             }
           });
         });
