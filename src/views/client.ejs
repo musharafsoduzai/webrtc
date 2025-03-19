@@ -85,6 +85,29 @@
       #message-input button {
         padding: 5px 10px;
       }
+
+      #remote-video {
+        width: 300px;
+        height: 200px;
+        object-fit: cover;
+        background-color: #000;
+        z-index: 1;
+      }
+
+      .remote-status-indicator {
+        position: absolute;
+        top: 5px;
+        right: 5px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background-color: red;
+        z-index: 2;
+      }
+
+      .remote-status-indicator.connected {
+        background-color: green;
+      }
     </style>
   </head>
 
@@ -347,15 +370,40 @@
             }
           }
 
-          updateStatus();
+          // Only call updateStatus if socket is defined
+          if (socket) {
+            updateStatus();
+          }
         } catch (error) {
           log("Media access completely failed: " + error.message);
           localAvatar.classList.remove("hidden");
-          alert(
-            "Camera access failed. Please check your permissions and try again.",
+          // Don't use alert here as it blocks the UI
+          updateConnectionStatus(
+            "Camera access failed. Please check permissions.",
           );
         }
       }
+
+      function updateStatus() {
+        // Check if socket exists before trying to emit
+        if (!socket) {
+          log("Warning: Cannot update status - socket not initialized");
+          return;
+        }
+
+        const videoTrack = localStream?.getVideoTracks()[0];
+        const audioTrack = localStream?.getAudioTracks()[0];
+
+        const status = {
+          cameraOn: videoTrack?.enabled ?? false,
+          audioOn: audioTrack?.enabled ?? false,
+        };
+
+        socket.emit("status:update", status);
+      }
+
+      // Store received ICE candidates until we can process them
+      let pendingIceCandidates = [];
 
       async function initializeWebRTC() {
         try {
@@ -374,6 +422,9 @@
             log(`Connection state changed: ${peerConnection.connectionState}`);
             if (peerConnection.connectionState === "connected") {
               updateConnectionStatus("Connected");
+
+              // Process any pending ICE candidates
+              processPendingIceCandidates();
             } else if (peerConnection.connectionState === "failed") {
               log("Connection failed. Attempting to restart...");
               restartConnection();
@@ -404,7 +455,13 @@
           peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
               log(`ICE candidate generated`);
-              socket.emit("rtc:candidate", { candidate: event.candidate });
+              if (socket) {
+                socket.emit("rtc:candidate", { candidate: event.candidate });
+              } else {
+                log(
+                  "Warning: Cannot send ICE candidate - socket not initialized",
+                );
+              }
             } else {
               log("ICE candidate gathering complete");
             }
@@ -453,9 +510,39 @@
           };
 
           log("WebRTC initialized successfully.");
+
+          // Process any pending ICE candidates that were received before initialization
+          processPendingIceCandidates();
         } catch (error) {
           log("Error initializing WebRTC: " + error.message);
           updateConnectionStatus("Connection error. Please try again.");
+        }
+      }
+
+      // Process any pending ICE candidates
+      async function processPendingIceCandidates() {
+        if (
+          peerConnection &&
+          peerConnection.remoteDescription &&
+          pendingIceCandidates.length > 0
+        ) {
+          log(
+            `Processing ${pendingIceCandidates.length} pending ICE candidates`,
+          );
+
+          for (const candidate of pendingIceCandidates) {
+            try {
+              await peerConnection.addIceCandidate(
+                new RTCIceCandidate(candidate),
+              );
+              log("Successfully added pending ICE candidate");
+            } catch (err) {
+              log("Error adding pending ICE candidate: " + err.message);
+            }
+          }
+
+          // Clear the pending candidates
+          pendingIceCandidates = [];
         }
       }
 
@@ -470,11 +557,20 @@
             peerConnection = null;
           }
 
+          // Clear pending candidates
+          pendingIceCandidates = [];
+
           // Reinitialize WebRTC
           await initializeWebRTC();
 
           // Notify server to restart the connection process
-          socket.emit("connection:restart");
+          if (socket) {
+            socket.emit("connection:restart");
+          } else {
+            log(
+              "Warning: Cannot request connection restart - socket not initialized",
+            );
+          }
 
           updateConnectionStatus("Reconnecting...");
         } catch (error) {
@@ -491,6 +587,59 @@
         } else {
           restartConnection();
         }
+      }
+
+      // Add this function to periodically check remote video status
+      function monitorRemoteVideo() {
+        setInterval(() => {
+          if (remoteVideo.srcObject) {
+            const videoTracks = remoteVideo.srcObject.getVideoTracks();
+            log(`Remote video has ${videoTracks.length} video tracks`);
+
+            if (videoTracks.length > 0) {
+              const track = videoTracks[0];
+              log(
+                `Remote video track: enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`,
+              );
+
+              // If track exists but video isn't showing, try to fix it
+              if (
+                track.enabled &&
+                track.readyState === "live" &&
+                remoteVideo.paused
+              ) {
+                log(
+                  "Remote video is paused but track is live - attempting to play",
+                );
+                remoteVideo
+                  .play()
+                  .catch((e) => log(`Cannot force play: ${e.message}`));
+              }
+            }
+
+            // Check if video element is actually displaying content
+            if (remoteVideo.videoWidth === 0 || remoteVideo.videoHeight === 0) {
+              log(
+                "Remote video dimensions are zero - video may not be displaying properly",
+              );
+
+              // Try reattaching the stream
+              const currentStream = remoteVideo.srcObject;
+              remoteVideo.srcObject = null;
+              setTimeout(() => {
+                remoteVideo.srcObject = currentStream;
+                remoteVideo.load();
+                remoteVideo
+                  .play()
+                  .catch((e) => log(`Reattach play error: ${e.message}`));
+              }, 1000);
+            } else {
+              log(
+                `Remote video dimensions: ${remoteVideo.videoWidth}x${remoteVideo.videoHeight}`,
+              );
+            }
+          }
+        }, 5000); // Check every 5 seconds
       }
 
       startButton.addEventListener("click", async () => {
@@ -534,6 +683,9 @@
           reconnectionDelay: 1000,
           timeout: 20000,
         });
+
+        // Now that socket is initialized, update status
+        updateStatus();
 
         socket.on("connect", () => {
           log("Connected to the server.");
@@ -635,7 +787,11 @@
               log("Error adding received ICE candidate: " + err.message);
             }
           } else {
-            log("Received ICE candidate but peer connection not ready");
+            log(
+              "Received ICE candidate but peer connection not ready - storing for later",
+            );
+            // Store the candidate for later processing
+            pendingIceCandidates.push(candidate);
           }
         });
 
@@ -679,6 +835,9 @@
           if (peerConnection) peerConnection.close();
           peerConnection = null;
         });
+
+        // Start monitoring remote video
+        monitorRemoteVideo();
       });
 
       function appendMessage(username, message) {
@@ -725,18 +884,6 @@
       messageInput.addEventListener("keypress", (event) => {
         if (event.key === "Enter") sendMessageButton.click();
       });
-
-      function updateStatus() {
-        const videoTrack = localStream?.getVideoTracks()[0];
-        const audioTrack = localStream?.getAudioTracks()[0];
-
-        const status = {
-          cameraOn: videoTrack?.enabled ?? false,
-          audioOn: audioTrack?.enabled ?? false,
-        };
-
-        socket.emit("status:update", status);
-      }
     </script>
   </body>
 </html>
