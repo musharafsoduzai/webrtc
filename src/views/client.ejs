@@ -64,6 +64,7 @@
       .video-wrapper {
         position: relative;
         display: inline-block;
+        background-color: #000;
       }
 
       #controls button {
@@ -87,11 +88,7 @@
       }
 
       #remote-video {
-        width: 300px;
-        height: 200px;
         object-fit: cover;
-        background-color: #000;
-        z-index: 1;
       }
 
       .remote-status-indicator {
@@ -107,6 +104,11 @@
 
       .remote-status-indicator.connected {
         background-color: green;
+      }
+
+      .video-wrapper:nth-child(2) {
+        min-height: 200px;
+        min-width: 300px;
       }
     </style>
   </head>
@@ -240,6 +242,10 @@
         isMobile: true,
         roomType: "",
       };
+
+      let remoteStreamBackup = null;
+      let videoFixAttempts = 0;
+      const MAX_FIX_ATTEMPTS = 5;
 
       // Function to handle screen sharing
       async function toggleScreenShare() {
@@ -471,12 +477,48 @@
             log(`Remote track received: ${event.track.kind}`);
 
             if (event.streams && event.streams[0]) {
-              remoteVideo.srcObject = event.streams[0];
+              const remoteStream = event.streams[0];
 
-              // Show remote avatar if no video tracks
+              if (!remoteVideo.srcObject) {
+                remoteVideo.srcObject = remoteStream;
+                remoteVideo.playsInline = true;
+                remoteVideo.muted = false;
+
+                remoteVideo.onloadedmetadata = () => {
+                  log("Remote video metadata loaded");
+                  playRemoteVideo();
+                };
+
+                remoteVideo.onerror = (e) => {
+                  log(
+                    `Remote video error: ${
+                      e.target.error?.message || "Unknown error"
+                    }`,
+                  );
+                };
+              }
+
               if (event.track.kind === "video") {
                 remoteAvatar.classList.add("hidden");
                 log("Remote video track connected");
+                logRemoteVideoStatus();
+
+                const videoCheckInterval = setInterval(() => {
+                  if (!remoteVideo.srcObject) {
+                    clearInterval(videoCheckInterval);
+                    return;
+                  }
+
+                  logRemoteVideoStatus();
+
+                  if (
+                    remoteVideo.videoWidth === 0 &&
+                    remoteVideo.videoHeight === 0
+                  ) {
+                    log("Attempting to fix zero-dimension video");
+                    fixRemoteVideo(remoteStream);
+                  }
+                }, 2000);
               } else {
                 log("Remote audio track connected");
               }
@@ -485,7 +527,6 @@
                 .getElementById("remote-status")
                 .classList.remove("hidden");
 
-              // Monitor remote track status
               event.track.onmute = () => {
                 log(`Remote ${event.track.kind} muted`);
                 if (event.track.kind === "video") {
@@ -497,6 +538,7 @@
                 log(`Remote ${event.track.kind} unmuted`);
                 if (event.track.kind === "video") {
                   remoteAvatar.classList.add("hidden");
+                  playRemoteVideo();
                 }
               };
 
@@ -589,57 +631,101 @@
         }
       }
 
-      // Add this function to periodically check remote video status
-      function monitorRemoteVideo() {
-        setInterval(() => {
-          if (remoteVideo.srcObject) {
-            const videoTracks = remoteVideo.srcObject.getVideoTracks();
-            log(`Remote video has ${videoTracks.length} video tracks`);
+      function logRemoteVideoStatus() {
+        if (!remoteVideo.srcObject) {
+          log("Remote video has no srcObject");
+          return;
+        }
 
-            if (videoTracks.length > 0) {
-              const track = videoTracks[0];
-              log(
-                `Remote video track: enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`,
-              );
+        const videoTracks = remoteVideo.srcObject.getVideoTracks();
+        log(`Remote video has ${videoTracks.length} video tracks`);
 
-              // If track exists but video isn't showing, try to fix it
-              if (
-                track.enabled &&
-                track.readyState === "live" &&
-                remoteVideo.paused
-              ) {
-                log(
-                  "Remote video is paused but track is live - attempting to play",
-                );
-                remoteVideo
-                  .play()
-                  .catch((e) => log(`Cannot force play: ${e.message}`));
+        if (videoTracks.length > 0) {
+          const track = videoTracks[0];
+          log(
+            `Remote video track: enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`,
+          );
+        }
+
+        log(
+          `Remote video dimensions: ${remoteVideo.videoWidth}x${remoteVideo.videoHeight}`,
+        );
+        log(`Remote video paused: ${remoteVideo.paused}`);
+      }
+
+      function playRemoteVideo() {
+        if (!remoteVideo.srcObject) return;
+
+        if (remoteVideo.paused) {
+          log("Attempting to play remote video");
+
+          remoteVideo
+            .play()
+            .then(() => {
+              log("Remote video playing successfully");
+            })
+            .catch((err) => {
+              log(`Remote video play error: ${err.message}`);
+
+              if (err.name === "NotAllowedError") {
+                showPlayButton();
               }
-            }
+            });
+        }
+      }
 
-            // Check if video element is actually displaying content
-            if (remoteVideo.videoWidth === 0 || remoteVideo.videoHeight === 0) {
-              log(
-                "Remote video dimensions are zero - video may not be displaying properly",
-              );
+      function fixRemoteVideo(stream) {
+        log("Applying fix for remote video display");
 
-              // Try reattaching the stream
-              const currentStream = remoteVideo.srcObject;
-              remoteVideo.srcObject = null;
-              setTimeout(() => {
-                remoteVideo.srcObject = currentStream;
-                remoteVideo.load();
-                remoteVideo
-                  .play()
-                  .catch((e) => log(`Reattach play error: ${e.message}`));
-              }, 1000);
-            } else {
-              log(
-                `Remote video dimensions: ${remoteVideo.videoWidth}x${remoteVideo.videoHeight}`,
-              );
-            }
-          }
-        }, 5000); // Check every 5 seconds
+        const oldStream = remoteVideo.srcObject;
+        remoteVideo.srcObject = null;
+
+        remoteVideo.offsetHeight;
+
+        setTimeout(() => {
+          remoteVideo.srcObject = stream;
+
+          remoteVideo
+            .play()
+            .then(() => log("Reattached remote video is playing"))
+            .catch((err) => log(`Reattach play error: ${err.message}`));
+        }, 100);
+      }
+
+      function showPlayButton() {
+        if (!document.getElementById("manual-play-button")) {
+          const playButton = document.createElement("button");
+          playButton.id = "manual-play-button";
+          playButton.textContent = "Tap to Play Video";
+          playButton.style.position = "absolute";
+          playButton.style.top = "50%";
+          playButton.style.left = "50%";
+          playButton.style.transform = "translate(-50%, -50%)";
+          playButton.style.zIndex = "10";
+          playButton.style.padding = "10px";
+          playButton.style.backgroundColor = "#007bff";
+          playButton.style.color = "white";
+          playButton.style.border = "none";
+          playButton.style.borderRadius = "5px";
+
+          playButton.onclick = () => {
+            remoteVideo
+              .play()
+              .then(() => {
+                log("Manual play successful");
+                playButton.style.display = "none";
+              })
+              .catch((err) => log(`Manual play error: ${err.message}`));
+          };
+
+          const videoWrapper = document.querySelector(
+            ".video-wrapper:nth-child(2)",
+          );
+          videoWrapper.style.position = "relative";
+          videoWrapper.appendChild(playButton);
+        } else {
+          document.getElementById("manual-play-button").style.display = "block";
+        }
       }
 
       startButton.addEventListener("click", async () => {
@@ -835,9 +921,6 @@
           if (peerConnection) peerConnection.close();
           peerConnection = null;
         });
-
-        // Start monitoring remote video
-        monitorRemoteVideo();
       });
 
       function appendMessage(username, message) {
@@ -884,6 +967,16 @@
       messageInput.addEventListener("keypress", (event) => {
         if (event.key === "Enter") sendMessageButton.click();
       });
+
+      // Function to handle video play errors
+      function handleVideoPlayError(videoElement) {
+        videoElement.addEventListener("error", (event) => {
+          log(`Video play error: ${event.message}`);
+        });
+      }
+
+      // Call this function after setting the video source
+      handleVideoPlayError(remoteVideo);
     </script>
   </body>
 </html>
