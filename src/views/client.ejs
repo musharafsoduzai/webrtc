@@ -380,7 +380,7 @@
 
       function attemptReconnect(peerConnection, rtcConfig) {
         if (peerConnection.restartIce) {
-          log("peerConnection.restartIce");
+          log("Restarting ICE...");
           peerConnection.restartIce();
         } else {
           log("Re-Initialize WebRTC");
