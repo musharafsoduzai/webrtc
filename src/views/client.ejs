@@ -209,6 +209,9 @@
         roomType: "",
       };
 
+      // Track if we've already set up the remote video to avoid duplicate setup
+      let remoteVideoSetup = false;
+
       // Function to handle screen sharing
       async function toggleScreenShare() {
         if (!isScreenSharing) {
@@ -274,6 +277,7 @@
         setInitials(remoteAvatar, "");
         document.getElementById("remote-status").classList.add("hidden");
         remoteVideo.srcObject = undefined;
+        remoteVideoSetup = false; // Reset the flag
 
         rtcConfig = {};
         participants = [];
@@ -359,30 +363,27 @@
                   " tracks",
               );
 
-              // Set remote video source
-              remoteVideo.srcObject = event.streams[0];
+              // Only set up the remote video once to avoid interruptions
+              if (!remoteVideoSetup) {
+                // Set remote video source
+                remoteVideo.srcObject = event.streams[0];
+                remoteVideoSetup = true;
 
-              // Force play the remote video
-              remoteVideo.play().catch((err) => {
-                log("Error playing remote video: " + err.message);
-              });
+                // Make sure remote video is visible
+                remoteVideo.style.display = "block";
+                remoteVideo.style.opacity = "1";
 
-              // Make sure remote video is visible
-              remoteVideo.style.display = "block";
-              remoteVideo.style.opacity = "1";
+                document
+                  .getElementById("remote-status")
+                  .classList.remove("hidden");
 
-              document
-                .getElementById("remote-status")
-                .classList.remove("hidden");
-
-              // Add event listener to check if video is actually playing
-              remoteVideo.addEventListener("loadedmetadata", () => {
-                log("Remote video metadata loaded");
-              });
-
-              remoteVideo.addEventListener("playing", () => {
-                log("Remote video is now playing");
-              });
+                // Add event listener to check if video is actually playing
+                remoteVideo.addEventListener("loadedmetadata", () => {
+                  log("Remote video metadata loaded");
+                  // Try to play the video after metadata is loaded
+                  playRemoteVideo();
+                });
+              }
             } else {
               log("No remote stream available in the track event");
             }
@@ -392,6 +393,26 @@
         } catch (error) {
           log("Error initializing WebRTC: " + error.message);
           updateConnectionStatus("Waiting for other user");
+        }
+      }
+
+      // Function to safely play the remote video
+      function playRemoteVideo() {
+        if (remoteVideo.paused) {
+          remoteVideo
+            .play()
+            .then(() => {
+              log("Remote video is now playing");
+            })
+            .catch((err) => {
+              log("Error playing remote video: " + err.message);
+              // If autoplay is blocked, show a message or button for user interaction
+              if (err.name === "NotAllowedError") {
+                log(
+                  "Autoplay blocked. User interaction required to play video.",
+                );
+              }
+            });
         }
       }
 
@@ -461,6 +482,7 @@
           updateConnectionStatus("Waiting for user to join...");
           setInitials(remoteAvatar, "");
           remoteVideo.srcObject = undefined;
+          remoteVideoSetup = false; // Reset the flag
           document.getElementById("remote-status").classList.add("hidden");
         });
 
@@ -638,6 +660,29 @@
 
       messageInput.addEventListener("keypress", (event) => {
         if (event.key === "Enter") sendMessageButton.click();
+      });
+
+      // Add a button to manually play the video if autoplay is blocked
+      function createPlayButton() {
+        const playButton = document.createElement("button");
+        playButton.textContent = "Play Remote Video";
+        playButton.style.position = "absolute";
+        playButton.style.top = "50%";
+        playButton.style.left = "50%";
+        playButton.style.transform = "translate(-50%, -50%)";
+        playButton.style.zIndex = "10";
+        playButton.onclick = playRemoteVideo;
+
+        const remoteVideoWrapper =
+          document.querySelector("#remote-video").parentElement;
+        remoteVideoWrapper.appendChild(playButton);
+      }
+
+      // Check if we need to add a play button (for browsers that block autoplay)
+      remoteVideo.addEventListener("canplay", () => {
+        if (remoteVideo.paused) {
+          createPlayButton();
+        }
       });
     </script>
   </body>
