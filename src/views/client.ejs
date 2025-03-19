@@ -213,6 +213,31 @@
       let remoteVideoSetup = false;
       let remoteStream = null;
 
+      // Define STUN and TURN servers for better connectivity
+      const iceServers = {
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+          // Add free TURN servers - you should replace these with your own TURN servers for production
+          {
+            urls: "turn:35.183.200.31:3478",
+            credential: "password",
+            username: "username",
+          },
+          {
+            urls: "turn:numb.viagenie.ca",
+            credential: "muazkh",
+            username: "webrtc@live.com",
+          },
+          {
+            urls: "turn:turn.anyfirewall.com:443?transport=tcp",
+            credential: "webrtc",
+            username: "webrtc",
+          },
+        ],
+        iceCandidatePoolSize: 10,
+      };
+
       // Function to handle screen sharing
       async function toggleScreenShare() {
         if (!isScreenSharing) {
@@ -315,9 +340,13 @@
         try {
           log("Accessing local media...");
 
-          // Try with simpler constraints first for better compatibility
+          // Use very basic constraints for maximum compatibility
           const simpleConstraints = {
-            video: true,
+            video: {
+              width: { ideal: 320 },
+              height: { ideal: 240 },
+              frameRate: { max: 15 },
+            },
             audio: true,
           };
 
@@ -326,7 +355,6 @@
           );
           localVideo.srcObject = localStream;
 
-          // Force play to ensure video starts
           try {
             await localVideo.play();
             log("Local video playback started");
@@ -336,14 +364,11 @@
 
           log("Local media stream added.");
         } catch (error) {
-          log(
-            "Error getting User Media with simple constraints: " +
-              error.message,
-          );
+          log("Error getting User Media: " + error.message);
           try {
-            // Fallback to even simpler constraints
+            // Fallback to absolute minimum constraints
             localStream = await navigator.mediaDevices.getUserMedia({
-              video: { facingMode: "user" },
+              video: true,
               audio: true,
             });
             localVideo.srcObject = localStream;
@@ -351,7 +376,7 @@
             log("Local media stream added with fallback constraints.");
           } catch (fallbackError) {
             log(
-              "Error getting User Media with fallback constraints: " +
+              "Error getting User Media with fallback: " +
                 fallbackError.message,
             );
           }
@@ -363,25 +388,26 @@
           updateConnectionStatus("Connecting to the other user...");
           log("Creating RTCPeerConnection...");
 
-          // Add STUN servers to improve connectivity
-          const rtcConfigWithStun = {
+          // Combine provided config with our ice servers
+          const combinedConfig = {
             ...rtcConfig,
             iceServers: [
-              { urls: "stun:stun.l.google.com:19302" },
-              { urls: "stun:stun1.l.google.com:19302" },
-              { urls: "stun:stun2.l.google.com:19302" },
-              { urls: "stun:stun3.l.google.com:19302" },
-              { urls: "stun:stun4.l.google.com:19302" },
               ...(rtcConfig.iceServers || []),
+              ...iceServers.iceServers,
             ],
+            iceCandidatePoolSize: 10,
           };
 
-          peerConnection = new RTCPeerConnection(rtcConfigWithStun);
+          peerConnection = new RTCPeerConnection(combinedConfig);
 
+          // Add all connection state change handlers
           peerConnection.onconnectionstatechange = () => {
             log("Connection state changed: " + peerConnection.connectionState);
             if (peerConnection.connectionState === "connected") {
               updateConnectionStatus("Connected");
+            } else if (peerConnection.connectionState === "failed") {
+              log("Connection failed. Attempting to restart...");
+              restartConnection();
             }
           };
 
@@ -391,16 +417,27 @@
                 peerConnection.iceConnectionState,
             );
             if (peerConnection.iceConnectionState === "disconnected") {
-              log("Disconnected. Attempting to reconnect...");
-              attemptReconnect(peerConnection, rtcConfigWithStun);
+              log("ICE Disconnected. Attempting to reconnect...");
+              if (peerConnection.restartIce) {
+                peerConnection.restartIce();
+              }
+            } else if (peerConnection.iceConnectionState === "failed") {
+              log("ICE Connection failed. Attempting to restart...");
+              restartConnection();
             }
           };
 
-          localStream.getTracks().forEach((track) => {
-            log("Adding local track to peer connection: " + track.kind);
-            peerConnection.addTrack(track, localStream);
-          });
+          // Add local tracks to the connection
+          if (localStream) {
+            localStream.getTracks().forEach((track) => {
+              log("Adding local track to peer connection: " + track.kind);
+              peerConnection.addTrack(track, localStream);
+            });
+          } else {
+            log("No local stream available to add tracks");
+          }
 
+          // Handle ICE candidates
           peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
               log("Sending ICE candidate...");
@@ -408,6 +445,7 @@
             }
           };
 
+          // Handle incoming tracks
           peerConnection.ontrack = (event) => {
             log("Track received: " + event.track.kind);
 
@@ -417,50 +455,98 @@
                   event.streams[0].getTracks().length +
                   " tracks",
               );
+
+              // Store the remote stream
               remoteStream = event.streams[0];
 
-              // Only set up the remote video once to avoid interruptions
-              if (!remoteVideoSetup) {
-                // Set remote video source
-                remoteVideo.srcObject = remoteStream;
-                remoteVideoSetup = true;
-
-                // Make sure remote video is visible
-                remoteVideo.style.display = "block";
-                remoteVideo.style.opacity = "1";
-
-                document
-                  .getElementById("remote-status")
-                  .classList.remove("hidden");
-
-                // Add event listeners to check if video is actually playing
-                remoteVideo.addEventListener("loadedmetadata", () => {
-                  log("Remote video metadata loaded");
-                  // Try to play the video after metadata is loaded
-                  setTimeout(playRemoteVideo, 1000); // Delay to ensure metadata is fully processed
-                });
-
-                // Create a manual play button for mobile browsers that block autoplay
-                createPlayButton();
-              }
+              // Set up the remote video
+              setupRemoteVideo(remoteStream);
             } else {
               log("No remote stream available in the track event");
             }
           };
 
-          log("WebRTC initialized.");
+          log("WebRTC initialized with ICE servers.");
         } catch (error) {
           log("Error initializing WebRTC: " + error.message);
-          updateConnectionStatus("Waiting for other user");
+          updateConnectionStatus("Error connecting");
         }
+      }
+
+      // Function to set up the remote video
+      function setupRemoteVideo(stream) {
+        if (!remoteVideoSetup && stream) {
+          log("Setting up remote video");
+
+          // Set the source
+          remoteVideo.srcObject = stream;
+          remoteVideoSetup = true;
+
+          // Make sure remote video is visible
+          remoteVideo.style.display = "block";
+          remoteVideo.style.opacity = "1";
+
+          document.getElementById("remote-status").classList.remove("hidden");
+
+          // Add event listeners
+          remoteVideo.addEventListener("loadedmetadata", () => {
+            log("Remote video metadata loaded");
+            setTimeout(() => {
+              playRemoteVideo();
+              // Create a play button as a fallback
+              createPlayButton();
+            }, 1000);
+          });
+
+          // Monitor the remote stream for track changes
+          stream.addEventListener("addtrack", (event) => {
+            log("New track added to remote stream: " + event.track.kind);
+          });
+
+          stream.addEventListener("removetrack", (event) => {
+            log("Track removed from remote stream: " + event.track.kind);
+          });
+        }
+      }
+
+      // Function to restart the connection if it fails
+      function restartConnection() {
+        log("Restarting connection...");
+
+        if (peerConnection) {
+          peerConnection.close();
+        }
+
+        // Reset flags
+        remoteVideoSetup = false;
+        remoteStream = null;
+
+        // Remove remote video source
+        remoteVideo.srcObject = null;
+
+        // Remove any play buttons
+        const playButton = document.querySelector(".manual-play-button");
+        if (playButton) playButton.remove();
+
+        // Reinitialize WebRTC
+        setTimeout(() => {
+          initializeWebRTC();
+          // If we were the offerer, create a new offer
+          if (socket) {
+            socket.emit("connection:restart");
+          }
+        }, 1000);
       }
 
       // Function to safely play the remote video
       function playRemoteVideo() {
-        if (remoteVideo.paused) {
+        if (remoteVideo.paused && remoteVideo.srcObject) {
           log("Attempting to play remote video...");
-          remoteVideo.muted = false; // Ensure it's not muted
 
+          // Ensure it's not muted
+          remoteVideo.muted = false;
+
+          // Try to play
           const playPromise = remoteVideo.play();
           if (playPromise !== undefined) {
             playPromise
@@ -469,26 +555,50 @@
               })
               .catch((err) => {
                 log("Error playing remote video: " + err.message);
-                // If autoplay is blocked, show a message or button for user interaction
-                if (err.name === "NotAllowedError") {
-                  log(
-                    "Autoplay blocked. User interaction required to play video.",
-                  );
-                  // Make sure the play button is visible
-                  const existingButton = document.querySelector(
-                    ".manual-play-button",
-                  );
-                  if (existingButton) {
-                    existingButton.style.display = "block";
-                  } else {
-                    createPlayButton();
-                  }
+                // Make the play button visible
+                const existingButton = document.querySelector(
+                  ".manual-play-button",
+                );
+                if (existingButton) {
+                  existingButton.style.display = "block";
+                } else {
+                  createPlayButton();
                 }
               });
           }
         } else {
-          log("Remote video is already playing");
+          log("Remote video is already playing or has no source");
         }
+      }
+
+      // Add a button to manually play the video
+      function createPlayButton() {
+        // Check if button already exists
+        if (document.querySelector(".manual-play-button")) return;
+
+        const playButton = document.createElement("button");
+        playButton.textContent = "Tap to Play Video";
+        playButton.className = "manual-play-button";
+        playButton.style.position = "absolute";
+        playButton.style.top = "50%";
+        playButton.style.left = "50%";
+        playButton.style.transform = "translate(-50%, -50%)";
+        playButton.style.zIndex = "10";
+        playButton.style.padding = "10px 20px";
+        playButton.style.backgroundColor = "#4CAF50";
+        playButton.style.color = "white";
+        playButton.style.border = "none";
+        playButton.style.borderRadius = "5px";
+        playButton.style.cursor = "pointer";
+
+        playButton.onclick = () => {
+          playRemoteVideo();
+          playButton.style.display = "none";
+        };
+
+        const remoteVideoWrapper =
+          document.querySelector("#remote-video").parentElement;
+        remoteVideoWrapper.appendChild(playButton);
       }
 
       function updateStatus() {
@@ -501,17 +611,6 @@
         };
 
         socket.emit("status:update", status);
-      }
-
-      function attemptReconnect(peerConnection, rtcConfig) {
-        if (peerConnection.restartIce) {
-          log("Restarting ICE...");
-          peerConnection.restartIce();
-        } else {
-          log("Re-Initialize WebRTC");
-          peerConnection.close();
-          initializeWebRTC();
-        }
       }
 
       startButton.addEventListener("click", async () => {
@@ -706,6 +805,17 @@
           },
           { once: true },
         );
+
+        // Add this to handle autoplay restrictions
+        document.addEventListener(
+          "click",
+          function () {
+            if (remoteVideo && remoteVideo.paused && remoteVideo.srcObject) {
+              playRemoteVideo();
+            }
+          },
+          { once: true },
+        );
       });
 
       function appendMessage(username, message) {
@@ -753,35 +863,11 @@
         if (event.key === "Enter") sendMessageButton.click();
       });
 
-      // Add a button to manually play the video if autoplay is blocked
-      function createPlayButton() {
-        // Check if button already exists
-        if (document.querySelector(".manual-play-button")) return;
-
-        const playButton = document.createElement("button");
-        playButton.textContent = "Tap to Play Video";
-        playButton.className = "manual-play-button";
-        playButton.style.position = "absolute";
-        playButton.style.top = "50%";
-        playButton.style.left = "50%";
-        playButton.style.transform = "translate(-50%, -50%)";
-        playButton.style.zIndex = "10";
-        playButton.style.padding = "10px 20px";
-        playButton.style.backgroundColor = "#4CAF50";
-        playButton.style.color = "white";
-        playButton.style.border = "none";
-        playButton.style.borderRadius = "5px";
-        playButton.style.cursor = "pointer";
-
-        playButton.onclick = () => {
-          playRemoteVideo();
-          playButton.style.display = "none"; // Hide after clicking
-        };
-
-        const remoteVideoWrapper =
-          document.querySelector("#remote-video").parentElement;
-        remoteVideoWrapper.appendChild(playButton);
-      }
+      // Add a new socket event for connection restart
+      socket.on("connection:restart", () => {
+        log("Received connection restart request");
+        restartConnection();
+      });
     </script>
   </body>
 </html>
