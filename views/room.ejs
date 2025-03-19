@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Video Chat Room</title>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css"
+    />
+    <link rel="stylesheet" href="/css/style.css" />
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+  </head>
+  <body>
+    <div class="room-container">
+      <div class="room-header">
+        <div class="room-info">
+          <h2>Meeting</h2>
+          <div class="room-id-display" id="roomId" title="Click to copy">
+            <%= roomId %>
+          </div>
+          <button id="copyRoomId" class="control-btn" title="Copy Meeting ID">
+            <i class="fas fa-copy"></i>
+            <span class="copy-tooltip" id="copyTooltip">Copied!</span>
+          </button>
+        </div>
+
+        <div class="controls">
+          <button id="muteBtn" class="control-btn" title="Mute/Unmute">
+            <i class="fas fa-microphone"></i>
+          </button>
+          <button
+            id="videoToggleBtn"
+            class="control-btn"
+            title="Turn Video On/Off"
+          >
+            <i class="fas fa-video"></i>
+          </button>
+          <button
+            id="leaveBtn"
+            class="control-btn danger"
+            title="Leave Meeting"
+          >
+            <i class="fas fa-phone-slash"></i>
+          </button>
+        </div>
+      </div>
+
+      <div id="videoGrid" class="video-grid"></div>
+    </div>
+
+    <script>
+      const ROOM_ID = "<%= roomId %>";
+    </script>
+    <script src="/js/client.js"></script>
+  </body>
+</html>

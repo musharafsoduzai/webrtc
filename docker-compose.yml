@@ -1,0 +1,15 @@
+version: "3"
+services:
+  webrtc-app:
+    build: .
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    environment:
+      - PORT=3000
+      # Add other environment variables as needed
+    volumes:
+      # For development, you can mount your code to enable hot reloading
+      # - .:/usr/src/app
+      # - /usr/src/app/node_modules
+      # For production, comment out the above lines
