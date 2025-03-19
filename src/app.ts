@@ -30,21 +30,9 @@ function startMainApp() {
   const server = new Turn({
     authMech: "long-term",
     listeningPort: 3478,
-    listeningIps: ["0.0.0.0"],
-    relayIps: ["0.0.0.0"],
-    minPort: 49152,
-    maxPort: 65535,
-    realm: "turn.example.com",
-    debugLevel: "INFO",
     credentials: {
       username: "password",
     },
-  });
-  server.on("error", (err) => {
-    console.error("TURN server error:", err);
-  });
-  server.on("listening", () => {
-    console.log("TURN server listening on port 3478");
   });
   server.on("relay", (data) => {
     console.log("Relay request:", data);

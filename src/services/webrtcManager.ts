@@ -4,36 +4,16 @@ class WebrtcManager {
   rtcConfig: RTCConfiguration = {
     iceServers: [
       {
-        urls: [
-          "stun:stun.l.google.com:19302",
-          "stun:stun1.l.google.com:19302",
-          "stun:stun2.l.google.com:19302",
-          "stun:stun3.l.google.com:19302",
-          "stun:stun4.l.google.com:19302",
-        ],
+        urls: ["stun:stun.l.google.com:19302"],
       },
       {
-        urls: [ENV.ICE_SERVER_URL],
+        urls: ENV.ICE_SERVER_URL,
         credential: "password",
         username: "username",
-      },
-      // Add additional free TURN servers for better mobile compatibility
-      {
-        urls: "turn:numb.viagenie.ca",
-        credential: "muazkh",
-        username: "webrtc@live.com",
-      },
-      {
-        urls: "turn:turn.anyfirewall.com:443?transport=tcp",
-        credential: "webrtc",
-        username: "webrtc",
       },
     ],
     iceCandidatePoolSize: 10,
     iceTransportPolicy: "all",
-    // Add these options for better mobile compatibility
-    bundlePolicy: "max-bundle",
-    rtcpMuxPolicy: "require",
   };
 
   getRtcConfig() {
