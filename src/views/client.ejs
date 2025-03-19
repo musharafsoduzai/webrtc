@@ -442,7 +442,7 @@
             }
           };
 
-          // Add all tracks from local stream to peer connection
+          // Add all tracks from local stream to peer connection connection
           if (localStream) {
             localStream.getTracks().forEach((track) => {
               log(`Adding ${track.kind} track to peer connection`);
