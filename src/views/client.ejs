@@ -184,23 +184,31 @@
        * @type {MediaStreamConstraints}
        */
       const mediaConstraints = {
-        video: {
-          width: { ideal: 640, max: 1280 },
-          height: { ideal: 480, max: 720 },
-          frameRate: { ideal: 24, max: 30 },
-          facingMode: { ideal: "user" },
-        },
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+        video: true,
+        audio: true,
       };
 
       let socket;
       let peerConnection;
       let localStream;
-      let rtcConfig = {};
+      let rtcConfig = {
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+          { urls: "stun:stun2.l.google.com:19302" },
+          {
+            urls: "turn:global.turn.twilio.com:3478?transport=udp",
+            username:
+              "f4b4035eaa76f77e3b3f90eda80ce6daa4d9c7dfa3d97745a089b4ec",
+            credential: "dECYpK/WYXVxGFHK8uEXza7hRMmXmLKI9JjvtG4nF9Y=",
+          },
+        ],
+        iceCandidatePoolSize: 10,
+        bundlePolicy: "max-bundle",
+        rtcpMuxPolicy: "require",
+        iceTransportPolicy: "all",
+      };
+
       let participants = [];
       const user = {
         id: new Date().getTime(),
@@ -294,38 +302,54 @@
         try {
           log("Accessing local media...");
 
-          // First try with ideal constraints
           try {
-            localStream = await navigator.mediaDevices.getUserMedia(
-              mediaConstraints,
-            );
-          } catch (initialError) {
-            log("Initial media access failed, trying fallback options...");
-
-            // Fallback to basic constraints if detailed ones fail
+            // First try with video and audio
             localStream = await navigator.mediaDevices.getUserMedia({
               video: true,
               audio: true,
             });
+            log("Camera and microphone access successful");
+          } catch (err) {
+            log("Full media access failed: " + err.message);
+
+            try {
+              // Try with just audio if video fails
+              localStream = await navigator.mediaDevices.getUserMedia({
+                video: false,
+                audio: true,
+              });
+              log("Audio-only access successful");
+              localAvatar.classList.remove("hidden");
+            } catch (audioErr) {
+              log("Audio access also failed: " + audioErr.message);
+              throw new Error("Could not access any media devices");
+            }
           }
 
-          localVideo.srcObject = localStream;
+          if (localStream) {
+            localVideo.srcObject = localStream;
 
-          // Use play() in a user interaction context to avoid autoplay restrictions
-          try {
-            await localVideo.play();
-            log("Local media stream added successfully.");
-          } catch (playError) {
-            log(`Error starting local video playback: ${playError.message}`);
-            // Show the avatar if video fails
-            localAvatar.classList.remove("hidden");
+            // Check if we have video tracks
+            if (localStream.getVideoTracks().length > 0) {
+              log(`Got video track: ${localStream.getVideoTracks()[0].label}`);
+              localAvatar.classList.add("hidden");
+            } else {
+              log("No video tracks available");
+              localAvatar.classList.remove("hidden");
+            }
+
+            // Try to play the video
+            try {
+              await localVideo.play();
+            } catch (playErr) {
+              log("Video play error: " + playErr.message);
+              // Continue anyway as this might be an autoplay restriction
+            }
           }
 
-          // Update initial status after stream is acquired
           updateStatus();
         } catch (error) {
-          log("Error getting User Media: " + error.message);
-          // Show avatar as fallback
+          log("Media access completely failed: " + error.message);
           localAvatar.classList.remove("hidden");
           alert(
             "Camera access failed. Please check your permissions and try again.",
@@ -338,39 +362,33 @@
           updateConnectionStatus("Connecting to the other user...");
           log("Creating RTCPeerConnection...");
 
-          // Get the config from server
-          if (!rtcConfig || Object.keys(rtcConfig).length === 0) {
-            log("Using default STUN/TURN configuration");
-            rtcConfig = {
-              iceServers: [
-                { urls: "stun:stun.l.google.com:19302" },
-                { urls: "stun:stun1.l.google.com:19302" },
-                { urls: "stun:stun2.l.google.com:19302" },
-              ],
-            };
+          // Close any existing connection
+          if (peerConnection) {
+            peerConnection.close();
           }
 
+          // Create new connection with our config
           peerConnection = new RTCPeerConnection(rtcConfig);
 
-          // Add connection state logging for debugging
           peerConnection.onconnectionstatechange = () => {
             log(`Connection state changed: ${peerConnection.connectionState}`);
             if (peerConnection.connectionState === "connected") {
               updateConnectionStatus("Connected");
+            } else if (peerConnection.connectionState === "failed") {
+              log("Connection failed. Attempting to restart...");
+              restartConnection();
             }
           };
 
           peerConnection.oniceconnectionstatechange = () => {
             log(`ICE connection state: ${peerConnection.iceConnectionState}`);
-            if (peerConnection.iceConnectionState === "disconnected") {
-              log("Disconnected. Attempting to reconnect...");
-              attemptReconnect(peerConnection, rtcConfig);
+            if (
+              peerConnection.iceConnectionState === "disconnected" ||
+              peerConnection.iceConnectionState === "failed"
+            ) {
+              log("ICE connection issue. Attempting to restart...");
+              restartConnection();
             }
-          };
-
-          // Log ICE gathering state changes
-          peerConnection.onicegatheringstatechange = () => {
-            log(`ICE gathering state: ${peerConnection.iceGatheringState}`);
           };
 
           // Add all tracks from local stream to peer connection
@@ -385,32 +403,52 @@
 
           peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
-              log(
-                `Sending ICE candidate: ${event.candidate.candidate.substring(
-                  0,
-                  50,
-                )}...`,
-              );
+              log(`ICE candidate generated`);
               socket.emit("rtc:candidate", { candidate: event.candidate });
+            } else {
+              log("ICE candidate gathering complete");
             }
           };
 
           peerConnection.ontrack = (event) => {
+            log(`Remote track received: ${event.track.kind}`);
+
             if (event.streams && event.streams[0]) {
-              log(`Received ${event.track.kind} track from remote peer`);
               remoteVideo.srcObject = event.streams[0];
 
-              // Handle remote video element
-              remoteVideo.onloadedmetadata = () => {
-                log("Remote video metadata loaded");
-                remoteVideo
-                  .play()
-                  .catch((e) => log(`Remote video play error: ${e.message}`));
-              };
+              // Show remote avatar if no video tracks
+              if (event.track.kind === "video") {
+                remoteAvatar.classList.add("hidden");
+                log("Remote video track connected");
+              } else {
+                log("Remote audio track connected");
+              }
 
               document
                 .getElementById("remote-status")
                 .classList.remove("hidden");
+
+              // Monitor remote track status
+              event.track.onmute = () => {
+                log(`Remote ${event.track.kind} muted`);
+                if (event.track.kind === "video") {
+                  remoteAvatar.classList.remove("hidden");
+                }
+              };
+
+              event.track.onunmute = () => {
+                log(`Remote ${event.track.kind} unmuted`);
+                if (event.track.kind === "video") {
+                  remoteAvatar.classList.add("hidden");
+                }
+              };
+
+              event.track.onended = () => {
+                log(`Remote ${event.track.kind} ended`);
+                if (event.track.kind === "video") {
+                  remoteAvatar.classList.remove("hidden");
+                }
+              };
             }
           };
 
@@ -421,25 +459,37 @@
         }
       }
 
-      function updateStatus() {
-        const videoTrack = localStream?.getVideoTracks()[0];
-        const audioTrack = localStream?.getAudioTracks()[0];
+      // Function to completely restart the connection
+      async function restartConnection() {
+        try {
+          log("Restarting connection...");
 
-        const status = {
-          cameraOn: videoTrack?.enabled ?? false,
-          audioOn: audioTrack?.enabled ?? false,
-        };
+          // Close existing connection
+          if (peerConnection) {
+            peerConnection.close();
+            peerConnection = null;
+          }
 
-        socket.emit("status:update", status);
+          // Reinitialize WebRTC
+          await initializeWebRTC();
+
+          // Notify server to restart the connection process
+          socket.emit("connection:restart");
+
+          updateConnectionStatus("Reconnecting...");
+        } catch (error) {
+          log("Error during connection restart: " + error.message);
+        }
       }
 
+      // Simplified reconnect attempt
       function attemptReconnect() {
-        if (peerConnection) {
-          console.log("Restarting ICE...");
+        log("Attempting to reconnect...");
+        if (peerConnection && peerConnection.restartIce) {
           peerConnection.restartIce();
+          log("ICE restart initiated");
         } else {
-          console.log("Re-initializing WebRTC...");
-          initializeWebRTC();
+          restartConnection();
         }
       }
 
@@ -470,28 +520,40 @@
 
         setInitials(localAvatar, username);
 
-        // Request permissions explicitly before getting user media
-        try {
-          // This will trigger the permission prompt
-          await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: true,
-          });
-          log("Permissions granted");
-        } catch (permissionError) {
-          log("Permission error: " + permissionError.message);
-        }
+        // Show loading indicator
+        updateConnectionStatus("Initializing camera...");
 
         await getUserMedia();
 
         log(`Hello, ${username}! Connecting to server...`);
-        updateConnectionStatus("Waiting for user to join...");
+        updateConnectionStatus("Connecting to server...");
 
-        socket = io(LIVE_SERVER_URL, { query: user });
+        socket = io(LIVE_SERVER_URL, {
+          query: user,
+          reconnectionAttempts: 5,
+          reconnectionDelay: 1000,
+          timeout: 20000,
+        });
 
         socket.on("connect", () => {
           log("Connected to the server.");
           socket.emit("room:join", { roomType });
+        });
+
+        socket.on("connect_error", (error) => {
+          log("Connection error: " + error.message);
+          updateConnectionStatus("Server connection failed. Please try again.");
+        });
+
+        socket.on("reconnect", (attemptNumber) => {
+          log(`Reconnected to server after ${attemptNumber} attempts`);
+          socket.emit("room:join", { roomType });
+        });
+
+        // Add handler for connection restart request
+        socket.on("connection:restart", async () => {
+          log("Received restart request from server");
+          await restartConnection();
         });
 
         socket.on("user:left", () => {
@@ -563,10 +625,17 @@
         });
 
         socket.on("rtc:candidate", async ({ candidate }) => {
-          if (peerConnection) {
-            await peerConnection.addIceCandidate(
-              new RTCIceCandidate(candidate),
-            );
+          if (peerConnection && peerConnection.remoteDescription) {
+            try {
+              log("Adding ICE candidate from remote peer");
+              await peerConnection.addIceCandidate(
+                new RTCIceCandidate(candidate),
+              );
+            } catch (err) {
+              log("Error adding received ICE candidate: " + err.message);
+            }
+          } else {
+            log("Received ICE candidate but peer connection not ready");
           }
         });
 
@@ -656,6 +725,18 @@
       messageInput.addEventListener("keypress", (event) => {
         if (event.key === "Enter") sendMessageButton.click();
       });
+
+      function updateStatus() {
+        const videoTrack = localStream?.getVideoTracks()[0];
+        const audioTrack = localStream?.getAudioTracks()[0];
+
+        const status = {
+          cameraOn: videoTrack?.enabled ?? false,
+          audioOn: audioTrack?.enabled ?? false,
+        };
+
+        socket.emit("status:update", status);
+      }
     </script>
   </body>
 </html>
