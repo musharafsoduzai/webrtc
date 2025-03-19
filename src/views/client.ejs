@@ -233,6 +233,7 @@
           navigator.userAgent,
         );
       log("Device type: " + (isMobile ? "Mobile" : "Desktop"));
+      log("Browser: " + navigator.userAgent);
 
       // Function to handle screen sharing
       async function toggleScreenShare() {
@@ -336,20 +337,11 @@
         try {
           log("Accessing local media...");
 
-          // Different constraints for mobile vs desktop
-          const constraints = isMobile
-            ? {
-                video: {
-                  width: { ideal: 320 },
-                  height: { ideal: 240 },
-                  frameRate: { max: 15 },
-                },
-                audio: true,
-              }
-            : {
-                video: true,
-                audio: true,
-              };
+          // Use very basic constraints for maximum compatibility
+          const constraints = {
+            video: true,
+            audio: true,
+          };
 
           log("Using constraints: " + JSON.stringify(constraints));
           localStream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -387,6 +379,8 @@
             log(
               `Local ${track.kind} track added: enabled=${track.enabled}, muted=${track.muted}`,
             );
+            // Ensure tracks are enabled
+            track.enabled = true;
           });
         } catch (error) {
           log("Error getting User Media: " + error.message);
@@ -401,13 +395,9 @@
           updateConnectionStatus("Connecting to the other user...");
           log("Creating RTCPeerConnection...");
 
-          // Use our predefined ice servers
+          // Use our predefined ice servers with simplified config
           const config = {
             iceServers: iceServers.iceServers,
-            iceTransportPolicy: "all",
-            bundlePolicy: "max-bundle",
-            rtcpMuxPolicy: "require",
-            sdpSemantics: "unified-plan",
           };
 
           log("Using RTCPeerConnection config: " + JSON.stringify(config));
@@ -418,6 +408,8 @@
             log("Connection state changed: " + peerConnection.connectionState);
             if (peerConnection.connectionState === "connected") {
               updateConnectionStatus("Connected");
+              // Try to play remote video again when connected
+              setTimeout(playRemoteVideo, 1000);
             }
           };
 
@@ -426,23 +418,6 @@
               "ICE connection state changed: " +
                 peerConnection.iceConnectionState,
             );
-            if (peerConnection.iceConnectionState === "disconnected") {
-              log("ICE Disconnected. Attempting to reconnect...");
-              if (peerConnection.restartIce) {
-                peerConnection.restartIce();
-              }
-            }
-          };
-
-          peerConnection.onicegatheringstatechange = () => {
-            log(
-              "ICE gathering state changed: " +
-                peerConnection.iceGatheringState,
-            );
-          };
-
-          peerConnection.onsignalingstatechange = () => {
-            log("Signaling state changed: " + peerConnection.signalingState);
           };
 
           // Add local tracks to the connection
@@ -463,9 +438,12 @@
             }
           };
 
-          // Handle incoming tracks
+          // Handle incoming tracks - CRITICAL PART
           peerConnection.ontrack = (event) => {
             log("Track received: " + event.track.kind);
+
+            // Force enable the track
+            event.track.enabled = true;
 
             if (event.streams && event.streams[0]) {
               log(
@@ -482,67 +460,63 @@
                 log(
                   `Remote ${track.kind} track: enabled=${track.enabled}, muted=${track.muted}`,
                 );
+                // Force enable all tracks
+                track.enabled = true;
               });
 
-              // Set up the remote video
-              setupRemoteVideo(remoteStream);
-            } else {
-              log("No remote stream available in the track event");
+              // Use a completely new approach for setting up the remote video
+              handleRemoteStream(remoteStream);
             }
           };
 
-          log("WebRTC initialized with ICE servers.");
+          log("WebRTC initialized.");
         } catch (error) {
           log("Error initializing WebRTC: " + error.message);
           updateConnectionStatus("Error connecting");
         }
       }
 
-      // Function to set up the remote video
-      function setupRemoteVideo(stream) {
+      // New approach for handling remote stream
+      function handleRemoteStream(stream) {
         log(
-          "Setting up remote video with stream that has " +
+          "Handling remote stream with " +
             stream.getTracks().length +
             " tracks",
         );
 
-        // Check if video tracks exist
-        const videoTracks = stream.getVideoTracks();
-        if (videoTracks.length === 0) {
-          log("WARNING: No video tracks in remote stream!");
-        } else {
-          log("Remote stream has " + videoTracks.length + " video tracks");
-          videoTracks.forEach((track) => {
-            log("Video track settings: " + JSON.stringify(track.getSettings()));
-            log("Video track enabled: " + track.enabled);
-            log("Video track muted: " + track.muted);
+        // Create a completely new video element
+        const newVideo = document.createElement("video");
+        newVideo.id = "remote-video-new";
+        newVideo.autoplay = true;
+        newVideo.playsInline = true;
+        newVideo.muted = false;
+        newVideo.style.width = "100%";
+        newVideo.style.height = "auto";
+        newVideo.style.backgroundColor = "#000";
 
-            // Ensure track is enabled
-            track.enabled = true;
-          });
-        }
+        // Add the new video element to the page
+        const container = document.querySelector("#remote-video").parentElement;
+        container.innerHTML = ""; // Clear existing content
+        container.appendChild(newVideo);
 
-        // Set the source directly on the existing video element
+        // Update our reference
+        remoteVideo = newVideo;
+
+        // Set the source
         remoteVideo.srcObject = stream;
-        remoteVideo.playsInline = true; // Important for iOS
-        remoteVideo.muted = false;
 
-        // Make sure remote video is visible
-        remoteVideo.style.display = "block";
-        remoteVideo.style.backgroundColor = "#000";
-
-        document.getElementById("remote-status").classList.remove("hidden");
-
-        // Create a play button for mobile devices
+        // Create a play button
         createPlayButton();
 
-        // Try to play the video automatically
-        playRemoteVideo();
-
-        // Add event listeners to monitor video state
+        // Add event listeners
         remoteVideo.addEventListener("loadedmetadata", () => {
-          log("Remote video metadata loaded");
-          setTimeout(playRemoteVideo, 500);
+          log(
+            "Remote video metadata loaded, size: " +
+              remoteVideo.videoWidth +
+              "x" +
+              remoteVideo.videoHeight,
+          );
+          playRemoteVideo();
         });
 
         remoteVideo.addEventListener("playing", () => {
@@ -550,33 +524,49 @@
           const playButton = document.querySelector(".manual-play-button");
           if (playButton) playButton.style.display = "none";
         });
+
+        remoteVideo.addEventListener("error", (e) => {
+          log("Remote video error: " + e);
+        });
+
+        // Try to play immediately
+        playRemoteVideo();
+
+        // And try again after a delay
+        setTimeout(playRemoteVideo, 1000);
+        setTimeout(playRemoteVideo, 3000);
       }
 
       // Function to safely play the remote video
       function playRemoteVideo() {
-        if (remoteVideo && remoteVideo.paused && remoteVideo.srcObject) {
-          log("Attempting to play remote video...");
+        if (!remoteVideo || !remoteVideo.srcObject) {
+          log("Cannot play remote video: No video element or source");
+          return;
+        }
 
-          // Ensure it's not muted
-          remoteVideo.muted = false;
+        if (!remoteVideo.paused) {
+          log("Remote video is already playing");
+          return;
+        }
 
-          // Try to play
-          remoteVideo
-            .play()
+        log("Attempting to play remote video...");
+
+        // Ensure it's not muted
+        remoteVideo.muted = false;
+
+        // Try to play
+        const playPromise = remoteVideo.play();
+        if (playPromise !== undefined) {
+          playPromise
             .then(() => {
               log("Remote video is now playing");
+              const playButton = document.querySelector(".manual-play-button");
+              if (playButton) playButton.style.display = "none";
             })
             .catch((err) => {
               log("Error playing remote video: " + err.message);
               // Make the play button visible
-              const existingButton = document.querySelector(
-                ".manual-play-button",
-              );
-              if (existingButton) {
-                existingButton.style.display = "block";
-              } else {
-                createPlayButton();
-              }
+              createPlayButton();
             });
         }
       }
@@ -601,15 +591,16 @@
         playButton.style.border = "none";
         playButton.style.borderRadius = "5px";
         playButton.style.cursor = "pointer";
+        playButton.style.fontSize = "16px";
 
         playButton.onclick = () => {
           playRemoteVideo();
+          playButton.style.display = "none";
         };
 
-        const remoteVideoWrapper =
-          document.querySelector("#remote-video").parentElement;
-        if (remoteVideoWrapper) {
-          remoteVideoWrapper.appendChild(playButton);
+        const container = document.querySelector("#remote-video").parentElement;
+        if (container) {
+          container.appendChild(playButton);
         }
       }
 
@@ -816,14 +807,18 @@
 
         // Add document-level event listeners for mobile devices
         document.addEventListener("DOMContentLoaded", () => {
+          log("DOM fully loaded");
+
           // Add event listeners to handle autoplay restrictions
           document.addEventListener("click", function () {
+            log("Document clicked");
             if (remoteVideo && remoteVideo.paused && remoteVideo.srcObject) {
               playRemoteVideo();
             }
           });
 
           document.addEventListener("touchstart", function () {
+            log("Document touched");
             if (remoteVideo && remoteVideo.paused && remoteVideo.srcObject) {
               playRemoteVideo();
             }
