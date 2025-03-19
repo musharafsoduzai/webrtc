@@ -183,6 +183,19 @@
       /**
        * @type {MediaStreamConstraints}
        */
+      const mediaConstraints = {
+        video: {
+          width: { ideal: 640, max: 1280 },
+          height: { ideal: 480, max: 720 },
+          frameRate: { ideal: 24, max: 30 },
+          facingMode: { ideal: "user" },
+        },
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      };
 
       let socket;
       let peerConnection;
@@ -196,60 +209,24 @@
         isMobile: true,
         roomType: "",
       };
-      rtcConfig = {
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-          { urls: "stun:stun2.l.google.com:19302" },
-          {
-            urls: "turn:35.183.200.31:3478",
-            credential: "password",
-            username: "username",
-          },
-        ],
-        sdpSemantics: "unified-plan", // Ensures iOS compatibility
-      };
-      const mediaConstraints = {
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30 },
-          facingMode: "user",
-        },
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      };
+
       // Function to handle screen sharing
       async function toggleScreenShare() {
         if (!isScreenSharing) {
           try {
-            // Start screen sharing
             screenStream = await navigator.mediaDevices.getDisplayMedia({
               video: true,
             });
-
-            // Replace the current video track with the screen track
             const screenTrack = screenStream.getVideoTracks()[0];
             const sender = peerConnection
               .getSenders()
               .find((s) => s.track.kind === "video");
             if (sender) sender.replaceTrack(screenTrack);
-
-            // Update the local video element
             localVideo.srcObject = screenStream;
-
-            screenTrack.onended = () => {
-              // Automatically stop screen sharing when the user stops sharing
-              stopScreenShare();
-            };
-
             isScreenSharing = true;
-            shareScreenButton.textContent = "Stop Sharing";
+            console.log("Screen sharing started.");
           } catch (error) {
-            log("Screen sharing failed: " + error.message);
+            console.error("Screen sharing failed:", error);
           }
         } else {
           stopScreenShare();
@@ -315,13 +292,44 @@
 
       async function getUserMedia() {
         try {
-          console.log("Requesting Camera & Microphone...");
-          localStream = await navigator.mediaDevices.getUserMedia(
-            mediaConstraints,
-          );
-          document.getElementById("local-video").srcObject = localStream;
+          log("Accessing local media...");
+
+          // First try with ideal constraints
+          try {
+            localStream = await navigator.mediaDevices.getUserMedia(
+              mediaConstraints,
+            );
+          } catch (initialError) {
+            log("Initial media access failed, trying fallback options...");
+
+            // Fallback to basic constraints if detailed ones fail
+            localStream = await navigator.mediaDevices.getUserMedia({
+              video: true,
+              audio: true,
+            });
+          }
+
+          localVideo.srcObject = localStream;
+
+          // Use play() in a user interaction context to avoid autoplay restrictions
+          try {
+            await localVideo.play();
+            log("Local media stream added successfully.");
+          } catch (playError) {
+            log(`Error starting local video playback: ${playError.message}`);
+            // Show the avatar if video fails
+            localAvatar.classList.remove("hidden");
+          }
+
+          // Update initial status after stream is acquired
+          updateStatus();
         } catch (error) {
-          console.error("Camera/Microphone Error:", error.message);
+          log("Error getting User Media: " + error.message);
+          // Show avatar as fallback
+          localAvatar.classList.remove("hidden");
+          alert(
+            "Camera access failed. Please check your permissions and try again.",
+          );
         }
       }
 
@@ -329,61 +337,87 @@
         try {
           updateConnectionStatus("Connecting to the other user...");
           log("Creating RTCPeerConnection...");
-          peerConnection = new RTCPeerConnection(rtcConfig);
-          if (!localStream) {
-            localStream = await getUserMedia();
-            if (!localStream) return;
+
+          // Get the config from server
+          if (!rtcConfig || Object.keys(rtcConfig).length === 0) {
+            log("Using default STUN/TURN configuration");
+            rtcConfig = {
+              iceServers: [
+                { urls: "stun:stun.l.google.com:19302" },
+                { urls: "stun:stun1.l.google.com:19302" },
+                { urls: "stun:stun2.l.google.com:19302" },
+              ],
+            };
           }
+
+          peerConnection = new RTCPeerConnection(rtcConfig);
+
+          // Add connection state logging for debugging
           peerConnection.onconnectionstatechange = () => {
+            log(`Connection state changed: ${peerConnection.connectionState}`);
             if (peerConnection.connectionState === "connected") {
               updateConnectionStatus("Connected");
             }
           };
 
           peerConnection.oniceconnectionstatechange = () => {
+            log(`ICE connection state: ${peerConnection.iceConnectionState}`);
             if (peerConnection.iceConnectionState === "disconnected") {
               log("Disconnected. Attempting to reconnect...");
               attemptReconnect(peerConnection, rtcConfig);
             }
           };
 
-          peerConnection.onnegotiationneeded = async () => {
-            if (isNegotiating) return;
-            isNegotiating = true;
-            setTimeout(() => (isNegotiating = false), 500); // Prevent double negotiation
-
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
-            socket.emit("rtc:offer", { offer });
+          // Log ICE gathering state changes
+          peerConnection.onicegatheringstatechange = () => {
+            log(`ICE gathering state: ${peerConnection.iceGatheringState}`);
           };
 
-          localStream.getTracks().forEach((track) => {
-            peerConnection.addTrack(track, localStream);
-          });
+          // Add all tracks from local stream to peer connection
+          if (localStream) {
+            localStream.getTracks().forEach((track) => {
+              log(`Adding ${track.kind} track to peer connection`);
+              peerConnection.addTrack(track, localStream);
+            });
+          } else {
+            log("Warning: No local stream to add to peer connection");
+          }
 
           peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
-              log("Sending ICE candidate...");
+              log(
+                `Sending ICE candidate: ${event.candidate.candidate.substring(
+                  0,
+                  50,
+                )}...`,
+              );
               socket.emit("rtc:candidate", { candidate: event.candidate });
             }
           };
 
           peerConnection.ontrack = (event) => {
-            if (event.streams[0]) {
+            if (event.streams && event.streams[0]) {
+              log(`Received ${event.track.kind} track from remote peer`);
               remoteVideo.srcObject = event.streams[0];
-              log("Remote stream received.");
-              document.getElementById("remote-video").srcObject =
-                event.streams[0];
+
+              // Handle remote video element
+              remoteVideo.onloadedmetadata = () => {
+                log("Remote video metadata loaded");
+                remoteVideo
+                  .play()
+                  .catch((e) => log(`Remote video play error: ${e.message}`));
+              };
+
               document
                 .getElementById("remote-status")
                 .classList.remove("hidden");
             }
           };
 
-          log("WebRTC initialized.");
+          log("WebRTC initialized successfully.");
         } catch (error) {
           log("Error initializing WebRTC: " + error.message);
-          updateConnectionStatus("Waiting for other user");
+          updateConnectionStatus("Connection error. Please try again.");
         }
       }
 
@@ -398,17 +432,13 @@
 
         socket.emit("status:update", status);
       }
-      async function fixSDP(sdp) {
-        sdp = sdp.replace(/a=extmap:([^\r\n]*)\r\n/g, ""); // Remove Chrome-specific extensions
-        return sdp;
-      }
-      function attemptReconnect(peerConnection, rtcConfig) {
-        if (peerConnection.restartIce) {
-          log("peerConnection.restartIce");
+
+      function attemptReconnect() {
+        if (peerConnection) {
+          console.log("Restarting ICE...");
           peerConnection.restartIce();
         } else {
-          log("Re-Initialize WebRTC");
-          peerConnection.close();
+          console.log("Re-initializing WebRTC...");
           initializeWebRTC();
         }
       }
@@ -439,6 +469,19 @@
         document.getElementById("controls").classList.remove("hidden");
 
         setInitials(localAvatar, username);
+
+        // Request permissions explicitly before getting user media
+        try {
+          // This will trigger the permission prompt
+          await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true,
+          });
+          log("Permissions granted");
+        } catch (permissionError) {
+          log("Permission error: " + permissionError.message);
+        }
+
         await getUserMedia();
 
         log(`Hello, ${username}! Connecting to server...`);
@@ -612,33 +655,6 @@
 
       messageInput.addEventListener("keypress", (event) => {
         if (event.key === "Enter") sendMessageButton.click();
-      });
-      document.addEventListener("DOMContentLoaded", async () => {
-        await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      });
-
-      socket.on("rtc:offer", async ({ offer }) => {
-        await peerConnection.setRemoteDescription(
-          new RTCSessionDescription(offer),
-        );
-        const answer = await peerConnection.createAnswer();
-        await peerConnection.setLocalDescription(answer);
-        socket.emit("rtc:answer", { answer });
-      });
-
-      socket.on("rtc:answer", async ({ answer }) => {
-        await peerConnection.setRemoteDescription(
-          new RTCSessionDescription(answer),
-        );
-      });
-
-      socket.on("rtc:candidate", async ({ candidate }) => {
-        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-      });
-
-      document.addEventListener("click", async () => {
-        if (!localStream) return;
-        localStream.getAudioTracks().forEach((track) => (track.enabled = true));
       });
     </script>
   </body>

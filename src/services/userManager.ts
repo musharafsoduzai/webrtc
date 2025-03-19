@@ -51,6 +51,15 @@ function onRoomJoin(socket: Socket, roomType: RoomType) {
   });
   console.log(`User ${socket.id} joined room ${room.id}`);
   rooms.startRoom(room.id);
+
+  // Add connection state handling for better mobile compatibility
+  socket.on("connection:state", (state) => {
+    if (state === "connected") {
+      console.log(`User ${socket.id} is connected smoothly.`);
+    } else {
+      console.log(`User ${socket.id} is experiencing connection issues.`);
+    }
+  });
 }
 
 function onRoomLeave(socket: Socket) {
