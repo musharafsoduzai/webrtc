@@ -185,11 +185,10 @@
        */
       const mediaConstraints = {
         video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          frameRate: { ideal: 30, max: 60 },
+          width: { ideal: 320 },
+          height: { ideal: 240 },
+          frameRate: { ideal: 15 },
           facingMode: { ideal: "user" },
-          aspectRatio: { ideal: 4 / 3 },
         },
         audio: {
           echoCancellation: true,
@@ -308,9 +307,12 @@
             mediaConstraints,
           );
           localVideo.srcObject = localStream;
+
+          // Force play to ensure video starts
           localVideo.play().catch((err) => {
             log(`Error starting local video playback: ${err.message}`);
           });
+
           log("Local media stream added.");
         } catch (error) {
           log("Error getting User Media: " + error.message);
@@ -348,14 +350,41 @@
           };
 
           peerConnection.ontrack = (event) => {
-            if (event.streams[0]) {
+            log("Track received: " + event.track.kind);
+
+            if (event.streams && event.streams[0]) {
+              log(
+                "Remote stream received with " +
+                  event.streams[0].getTracks().length +
+                  " tracks",
+              );
+
+              // Set remote video source
               remoteVideo.srcObject = event.streams[0];
-              log("Remote stream received.");
+
+              // Force play the remote video
+              remoteVideo.play().catch((err) => {
+                log("Error playing remote video: " + err.message);
+              });
+
+              // Make sure remote video is visible
+              remoteVideo.style.display = "block";
+              remoteVideo.style.opacity = "1";
+
               document
                 .getElementById("remote-status")
                 .classList.remove("hidden");
+
+              // Add event listener to check if video is actually playing
+              remoteVideo.addEventListener("loadedmetadata", () => {
+                log("Remote video metadata loaded");
+              });
+
+              remoteVideo.addEventListener("playing", () => {
+                log("Remote video is now playing");
+              });
             } else {
-              log("No remote stream available.");
+              log("No remote stream available in the track event");
             }
           };
 
@@ -474,32 +503,53 @@
         );
 
         socket.on("rtc:offer", async ({ offer }) => {
+          log("Received RTC offer");
           if (!peerConnection) {
             await initializeWebRTC();
           }
-          await peerConnection.setRemoteDescription(
-            new RTCSessionDescription(offer),
-          );
 
-          const answer = await peerConnection.createAnswer();
-          await peerConnection.setLocalDescription(answer);
+          try {
+            await peerConnection.setRemoteDescription(
+              new RTCSessionDescription(offer),
+            );
+            log("Set remote description from offer");
 
-          socket.emit("rtc:answer", { answer });
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            log("Created and set local answer");
+
+            socket.emit("rtc:answer", { answer });
+            log("Sent answer to peer");
+          } catch (error) {
+            log("Error handling offer: " + error.message);
+          }
         });
 
         socket.on("rtc:answer", async ({ answer }) => {
+          log("Received RTC answer");
           if (peerConnection) {
-            await peerConnection.setRemoteDescription(
-              new RTCSessionDescription(answer),
-            );
+            try {
+              await peerConnection.setRemoteDescription(
+                new RTCSessionDescription(answer),
+              );
+              log("Set remote description from answer");
+            } catch (error) {
+              log("Error setting remote description: " + error.message);
+            }
           }
         });
 
         socket.on("rtc:candidate", async ({ candidate }) => {
+          log("Received ICE candidate");
           if (peerConnection) {
-            await peerConnection.addIceCandidate(
-              new RTCIceCandidate(candidate),
-            );
+            try {
+              await peerConnection.addIceCandidate(
+                new RTCIceCandidate(candidate),
+              );
+              log("Added ICE candidate");
+            } catch (error) {
+              log("Error adding ICE candidate: " + error.message);
+            }
           }
         });
 
