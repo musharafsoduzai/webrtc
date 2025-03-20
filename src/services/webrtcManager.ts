@@ -39,6 +39,11 @@ class WebrtcManager {
       this.rtcConfig.iceServers[index] = server;
     }
   }
+
+  setRtcConfig(config: RTCConfiguration) {
+    this.rtcConfig = config;
+    return this.rtcConfig;
+  }
 }
 
 export default new WebrtcManager();

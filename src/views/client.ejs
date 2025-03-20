@@ -1,621 +1,679 @@
 <!DOCTYPE html>
 <html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebRTC Demo</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        padding: 20px;
+      }
 
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>WebRTC Demo</title>
-  <script src="/socket.io/socket.io.js"></script>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      padding: 20px;
-    }
+      #log {
+        max-height: 300px;
+        overflow-y: auto;
+        border: 1px solid #ccc;
+        padding: 10px;
+        background: #f9f9f9;
+        margin-top: 20px;
+      }
 
-    #log {
-      max-height: 300px;
-      overflow-y: auto;
-      border: 1px solid #ccc;
-      padding: 10px;
-      background: #f9f9f9;
-      margin-top: 20px;
-    }
+      #messages {
+        max-height: 300px;
+        overflow-y: auto;
+        border: 1px solid #ccc;
+        padding: 10px;
+        background: #f1f1f1;
+        margin-top: 20px;
+      }
 
-    #messages {
-      max-height: 300px;
-      overflow-y: auto;
-      border: 1px solid #ccc;
-      padding: 10px;
-      background: #f1f1f1;
-      margin-top: 20px;
-    }
+      .hidden {
+        display: none;
+      }
 
-    .hidden {
-      display: none;
-    }
+      .log-entry {
+        margin-bottom: 10px;
+      }
 
-    .log-entry {
-      margin-bottom: 10px;
-    }
+      video {
+        width: 300px;
+        height: 200px;
+        border: 1px solid #ccc;
+        background: #000;
+      }
 
-    video {
-      width: 300px;
-      height: 200px;
-      border: 1px solid #ccc;
-      background: #000;
-    }
+      .avatar {
+        width: 20px;
+        height: 20px;
+        background: #8b430b;
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1rem;
+        font-weight: bold;
+        text-transform: uppercase;
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        border-radius: 9999px;
+      }
 
-    .avatar {
-      width: 20px;
-      height: 20px;
-      background: #8b430b;
-      color: white;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1rem;
-      font-weight: bold;
-      text-transform: uppercase;
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      border-radius: 9999px;
-    }
+      .video-wrapper {
+        position: relative;
+        display: inline-block;
+      }
 
-    .video-wrapper {
-      position: relative;
-      display: inline-block;
-    }
+      #controls button {
+        margin: 5px;
+      }
 
-    #controls button {
-      margin: 5px;
-    }
+      #message-input {
+        margin-top: 10px;
+        display: flex;
+        gap: 10px;
+      }
 
-    #message-input {
-      margin-top: 10px;
-      display: flex;
-      gap: 10px;
-    }
+      #message-input input {
+        flex: 1;
+        padding: 5px;
+        border: 1px solid #ccc;
+      }
 
-    #message-input input {
-      flex: 1;
-      padding: 5px;
-      border: 1px solid #ccc;
-    }
+      #message-input button {
+        padding: 5px 10px;
+      }
+    </style>
+  </head>
 
-    #message-input button {
-      padding: 5px 10px;
-    }
-  </style>
-</head>
+  <body>
+    <h1>WebRTC Demo with Socket.io</h1>
+    <div id="username-section">
+      <label for="username">Enter your username:</label>
+      <input type="text" id="username" />
 
-<body>
-  <h1>WebRTC Demo with Socket.io</h1>
-  <div id="username-section">
-    <label for="username">Enter your username:</label>
-    <input type="text" id="username" />
+      <label for="room-type">Choose Room Type:</label>
+      <select id="room-type">
+        <option value="friend-zone">Friend Zone</option>
+        <option value="propagation">Propagation</option>
+      </select>
+      <label for="gender">Choose Your Gender:</label>
+      <select id="gender">
+        <option value="male">Male</option>
+        <option value="female">Female</option>
+      </select>
 
-    <label for="room-type">Choose Room Type:</label>
-    <select id="room-type">
-      <option value="friend-zone">Friend Zone</option>
-      <option value="propagation">Propagation</option>
-    </select>
-    <label for="gender">Choose Your Gender:</label>
-    <select id="gender">
-      <option value="male">Male</option>
-      <option value="female">Female</option>
-    </select>
-
-    <button id="start-button">Start</button>
-    <div id="base-url" style="visibility: hidden">
-      <%= LIVE_SERVER_URL %>
+      <button id="start-button">Start</button>
+      <div id="base-url" style="visibility: hidden"><%= LIVE_SERVER_URL %></div>
     </div>
-  </div>
 
-  <div id="video-section" class="hidden">
-    <h2>Video Call</h2>
-    <div style="display: flex; gap: 0.5rem; justify-items: center;">
-      <div class="video-wrapper">
-        <video id="local-video" autoplay playsinline></video>
-        <div id="local-avatar" class="avatar hidden"></div>
+    <div id="video-section" class="hidden">
+      <h2>Video Call</h2>
+      <div style="display: flex; gap: 0.5rem; justify-items: center">
+        <div class="video-wrapper">
+          <video id="local-video" autoplay playsinline></video>
+          <div id="local-avatar" class="avatar hidden"></div>
+        </div>
+        <div class="video-wrapper">
+          <video id="remote-video" autoplay playsinline></video>
+          <div id="remote-avatar" class="avatar hidden"></div>
+        </div>
       </div>
-      <div class="video-wrapper">
-        <video id="remote-video" autoplay playsinline></video>
-        <div id="remote-avatar" class="avatar hidden"></div>
+      <div id="controls" class="hidden">
+        <button id="toggle-camera">Turn Off Camera</button>
+        <button id="toggle-audio">Mute</button>
+        <button id="share-screen">Share Screen</button>
+        <button id="leave-room">Leave Room</button>
+      </div>
+      <div id="remote-status" class="hidden">
+        <p>remote User:</p>
+        <span id="remote-camera-status">Camera: On</span>
+        <span id="remote-audio-status">Microphone: Unmuted</span>
+      </div>
+      <div id="connection-status" style="margin-top: 20px; font-weight: bold">
+        Status: <span id="status-text">Waiting for user to join...</span>
+      </div>
+      <div style="display: flex; gap: 1rem">
+        <div id="log" style="flex: 1"></div>
+        <div style="flex: 1">
+          <h3>Chat</h3>
+          <div id="messages"></div>
+        </div>
+      </div>
+      <div id="message-input">
+        <input
+          type="text"
+          id="message-text"
+          placeholder="Type your message..."
+        />
+        <button id="send-message">Send</button>
       </div>
     </div>
-    <div id="controls" class="hidden">
-      <button id="toggle-camera">Turn Off Camera</button>
-      <button id="toggle-audio">Mute</button>
-      <button id="share-screen">Share Screen</button>
-      <button id="leave-room">Leave Room</button>
-    </div>
-    <div id="remote-status" class="hidden">
-      <p>remote User:</p>
-      <span id="remote-camera-status">Camera: On</span>
-      <span id="remote-audio-status">Microphone: Unmuted</span>
-    </div>
-    <div id="connection-status" style="margin-top: 20px; font-weight: bold;">
-      Status: <span id="status-text">Waiting for user to join...</span>
-    </div>
-    <div style="display: flex; gap: 1rem;">
-      <div id="log" style="flex: 1;"></div>
-      <div style="flex: 1;">
-        <h3>Chat</h3>
-        <div id="messages"></div>
-      </div>
-    </div>
-    <div id="message-input">
-      <input type="text" id="message-text" placeholder="Type your message..." />
-      <button id="send-message">Send</button>
-    </div>
-  </div>
 
-  <script>
-    // Check if we're on an insecure connection
-    if (window.location.protocol === 'http:' && !window.location.hostname.includes('localhost')) {
-      console.warn('Running on insecure connection. Camera/microphone access may be blocked.');
-      // You could show a user-friendly message here
-    }
+    <script>
+      // Check if we're on an insecure connection
+      if (
+        window.location.protocol === "http:" &&
+        !window.location.hostname.includes("localhost")
+      ) {
+        console.warn(
+          "Running on insecure connection. Camera/microphone access may be blocked.",
+        );
+        // You could show a user-friendly message here
+      }
 
-    const LIVE_SERVER_URL = document.getElementById("base-url").innerText;
-    const usernameInput = document.getElementById("username");
-    const roomTypeInput = document.getElementById("room-type");
-    const genderInput = document.getElementById("gender");
-    const startButton = document.getElementById("start-button");
-    const usernameSection = document.getElementById("username-section");
-    const videoSection = document.getElementById("video-section");
-    const statusText = document.getElementById("status-text");
-    const localVideo = document.getElementById("local-video");
-    const remoteVideo = document.getElementById("remote-video");
-    const localAvatar = document.getElementById("local-avatar");
-    const remoteAvatar = document.getElementById("remote-avatar");
-    const logContainer = document.getElementById("log");
-    const toggleCameraButton = document.getElementById("toggle-camera");
-    const toggleAudioButton = document.getElementById("toggle-audio");
-    const messagesContainer = document.getElementById("messages");
-    const messageInput = document.getElementById("message-text");
-    const sendMessageButton = document.getElementById("send-message");
-    const remoteCameraStatus = document.getElementById("remote-camera-status");
-    const remoteAudioStatus = document.getElementById("remote-audio-status");
-    const shareScreenButton = document.getElementById("share-screen");
-    const leaveRoomButton = document.getElementById("leave-room");
+      const LIVE_SERVER_URL = document.getElementById("base-url").innerText;
+      const usernameInput = document.getElementById("username");
+      const roomTypeInput = document.getElementById("room-type");
+      const genderInput = document.getElementById("gender");
+      const startButton = document.getElementById("start-button");
+      const usernameSection = document.getElementById("username-section");
+      const videoSection = document.getElementById("video-section");
+      const statusText = document.getElementById("status-text");
+      const localVideo = document.getElementById("local-video");
+      const remoteVideo = document.getElementById("remote-video");
+      const localAvatar = document.getElementById("local-avatar");
+      const remoteAvatar = document.getElementById("remote-avatar");
+      const logContainer = document.getElementById("log");
+      const toggleCameraButton = document.getElementById("toggle-camera");
+      const toggleAudioButton = document.getElementById("toggle-audio");
+      const messagesContainer = document.getElementById("messages");
+      const messageInput = document.getElementById("message-text");
+      const sendMessageButton = document.getElementById("send-message");
+      const remoteCameraStatus = document.getElementById(
+        "remote-camera-status",
+      );
+      const remoteAudioStatus = document.getElementById("remote-audio-status");
+      const shareScreenButton = document.getElementById("share-screen");
+      const leaveRoomButton = document.getElementById("leave-room");
 
-    let isScreenSharing = false;
-    let screenStream;
-    /**
-    * @type {MediaStreamConstraints}
-    */
-    const mediaConstraints = {
-      // video: {
-      //   width: { ideal: 1280 },
-      //   height: { ideal: 720 },
-      //   frameRate: { ideal: 30, max: 60 },
-      //   facingMode: { ideal: "user" },
-      //   aspectRatio: { ideal: 16 / 9 },
-      // },
-      video: true,
-      // audio: {
-      //   echoCancellation: true,
-      //   noiseSuppression: true,
-      //   // autoGainControl: true,
-      // }
-      audio: true,
-    };
-    let socket;
-    let peerConnection;
-    let localStream;
-    let rtcConfig = {};
-    let participants = [];
-    const user = {
-      id: new Date().getTime(),
-      gender: "",
-      username: "",
-      isMobile: true,
-      roomType: "",
-    };
+      let isScreenSharing = false;
+      let screenStream;
+      /**
+       * @type {MediaStreamConstraints}
+       */
+      const mediaConstraints = {
+        // video: {
+        //   width: { ideal: 1280 },
+        //   height: { ideal: 720 },
+        //   frameRate: { ideal: 30, max: 60 },
+        //   facingMode: { ideal: "user" },
+        //   aspectRatio: { ideal: 16 / 9 },
+        // },
+        video: true,
+        // audio: {
+        //   echoCancellation: true,
+        //   noiseSuppression: true,
+        //   // autoGainControl: true,
+        // }
+        audio: true,
+      };
+      let peerConnection;
+      let localStream;
+      let rtcConfig = {};
+      let participants = [];
+      const user = {
+        id: new Date().getTime(),
+        gender: "",
+        username: "",
+        isMobile: true,
+        roomType: "",
+      };
 
+      // Use secure WebSocket if the page is loaded over HTTPS
+      const socketProtocol =
+        window.location.protocol === "https:" ? "wss:" : "ws:";
+      const socketUrl = socketProtocol + "//" + window.location.host;
 
-    // Function to handle screen sharing
-    async function toggleScreenShare() {
-      if (!isScreenSharing) {
-        try {
-          // Start screen sharing
-          screenStream = await navigator.mediaDevices.getDisplayMedia({
-            video: true,
-          });
+      // Connect to the socket server
+      const socket = io(socketUrl, {
+        transports: ["websocket"],
+        upgrade: false,
+      });
 
-          // Replace the current video track with the screen track
+      // Function to handle screen sharing
+      async function toggleScreenShare() {
+        if (!isScreenSharing) {
+          try {
+            // Start screen sharing
+            screenStream = await navigator.mediaDevices.getDisplayMedia({
+              video: true,
+            });
+
+            // Replace the current video track with the screen track
+            const screenTrack = screenStream.getVideoTracks()[0];
+            const sender = peerConnection
+              .getSenders()
+              .find((s) => s.track.kind === "video");
+            if (sender) sender.replaceTrack(screenTrack);
+
+            // Update the local video element
+            localVideo.srcObject = screenStream;
+
+            // Wait for metadata to load before playing if needed
+            if (localVideo.readyState < 2) {
+              // HAVE_CURRENT_DATA
+              localVideo.addEventListener(
+                "loadedmetadata",
+                function onMetadataLoaded() {
+                  localVideo.removeEventListener(
+                    "loadedmetadata",
+                    onMetadataLoaded,
+                  );
+                  localVideo.play().catch((err) => {
+                    log(`Error playing screen share: ${err.message}`);
+                  });
+                },
+              );
+            }
+
+            screenTrack.onended = () => {
+              // Automatically stop screen sharing when the user stops sharing
+              stopScreenShare();
+            };
+
+            isScreenSharing = true;
+            shareScreenButton.textContent = "Stop Sharing";
+          } catch (error) {
+            log("Screen sharing failed: " + error.message);
+          }
+        } else {
+          stopScreenShare();
+        }
+      }
+
+      // Function to stop screen sharing
+      function stopScreenShare() {
+        if (screenStream) {
           const screenTrack = screenStream.getVideoTracks()[0];
+          if (screenTrack) screenTrack.stop();
+
+          // Revert to the original camera video track
+          const videoTrack = localStream.getVideoTracks()[0];
           const sender = peerConnection
             .getSenders()
             .find((s) => s.track.kind === "video");
-          if (sender) sender.replaceTrack(screenTrack);
+          if (sender) sender.replaceTrack(videoTrack);
 
-          // Update the local video element
-          localVideo.srcObject = screenStream;
-          
+          localVideo.srcObject = localStream;
+
           // Wait for metadata to load before playing if needed
-          if (localVideo.readyState < 2) { // HAVE_CURRENT_DATA
-            localVideo.addEventListener('loadedmetadata', function onMetadataLoaded() {
-              localVideo.removeEventListener('loadedmetadata', onMetadataLoaded);
-              localVideo.play().catch(err => {
-                log(`Error playing screen share: ${err.message}`);
-              });
-            });
+          if (localVideo.readyState < 2) {
+            // HAVE_CURRENT_DATA
+            localVideo.addEventListener(
+              "loadedmetadata",
+              function onMetadataLoaded() {
+                localVideo.removeEventListener(
+                  "loadedmetadata",
+                  onMetadataLoaded,
+                );
+                localVideo.play().catch((err) => {
+                  log(
+                    `Error playing camera after screen share: ${err.message}`,
+                  );
+                });
+              },
+            );
           }
 
-          screenTrack.onended = () => {
-            // Automatically stop screen sharing when the user stops sharing
-            stopScreenShare();
-          };
-
-          isScreenSharing = true;
-          shareScreenButton.textContent = "Stop Sharing";
-        } catch (error) {
-          log("Screen sharing failed: " + error.message);
+          isScreenSharing = false;
+          shareScreenButton.textContent = "Share Screen";
         }
-      } else {
-        stopScreenShare();
       }
-    }
 
-    // Function to stop screen sharing
-    function stopScreenShare() {
-      if (screenStream) {
-        const screenTrack = screenStream.getVideoTracks()[0];
-        if (screenTrack) screenTrack.stop();
+      // Add an event listener for the "Share Screen" button
+      shareScreenButton.addEventListener("click", toggleScreenShare);
 
-        // Revert to the original camera video track
-        const videoTrack = localStream.getVideoTracks()[0];
-        const sender = peerConnection
-          .getSenders()
-          .find((s) => s.track.kind === "video");
-        if (sender) sender.replaceTrack(videoTrack);
-
-        localVideo.srcObject = localStream;
-        
-        // Wait for metadata to load before playing if needed
-        if (localVideo.readyState < 2) { // HAVE_CURRENT_DATA
-          localVideo.addEventListener('loadedmetadata', function onMetadataLoaded() {
-            localVideo.removeEventListener('loadedmetadata', onMetadataLoaded);
-            localVideo.play().catch(err => {
-              log(`Error playing camera after screen share: ${err.message}`);
-            });
-          });
-        }
-        
-        isScreenSharing = false;
-        shareScreenButton.textContent = "Share Screen";
-      }
-    }
-
-    // Add an event listener for the "Share Screen" button
-    shareScreenButton.addEventListener("click", toggleScreenShare);
-
-    leaveRoomButton.addEventListener("click", () => {
-      socket?.emit("room:leave");
-      if (peerConnection) peerConnection.close();
-      peerConnection = null;
-      log("left the room.");
-      updateConnectionStatus("Waiting for user to join...");
-      setInitials(remoteAvatar, "");
-      document.getElementById("remote-status").classList.add("hidden");
-      remoteVideo.srcObject = undefined
-
-      rtcConfig = {};
-      participants = [];
-    });
-
-    function updateConnectionStatus(status) {
-      statusText.textContent = status;
-
-    }
-
-    function log(message) {
-      const entry = document.createElement("div");
-      entry.className = "log-entry";
-      entry.textContent = message;
-      logContainer.appendChild(entry);
-      logContainer.scrollTop = logContainer.scrollHeight;
-    }
-
-    function setInitials(element, name) {
-      const initials = name
-        .split(" ")
-        .map((n) => n[0])
-        .join("")
-        .toUpperCase();
-      element.textContent = initials;
-    }
-
-    async function getUserMedia() {
-      try {
-        log("Accessing local media...");
-        localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
-        localVideo.srcObject = localStream;
-        // Wait for metadata to load before playing
-        localVideo.addEventListener('loadedmetadata', function onMetadataLoaded() {
-          localVideo.removeEventListener('loadedmetadata', onMetadataLoaded);
-          localVideo.play().catch((err) => {
-            log(`Error starting local video playback: ${err.message}`);
-          });
-        });
-        log("Local media stream added.");
-      } catch (error) {
-        log("Error getting User Media: " + error.message);
-      }
-    }
-
-    async function initializeWebRTC() {
-      try {
-        updateConnectionStatus("Connecting to the other user...");
-        log("Creating RTCPeerConnection...");
-        peerConnection = new RTCPeerConnection(rtcConfig);
-
-        peerConnection.onconnectionstatechange = () => {
-          if (peerConnection.connectionState === "connected") {
-            updateConnectionStatus("Connected");
-          }
-        };
-
-        peerConnection.oniceconnectionstatechange = () => {
-          if (peerConnection.iceConnectionState === "disconnected") {
-            log("Disconnected. Attempting to reconnect...");
-            attemptReconnect(peerConnection, rtcConfig);
-          }
-        };
-
-        localStream.getTracks().forEach((track) => {
-          peerConnection.addTrack(track, localStream);
-        });
-
-        peerConnection.onicecandidate = (event) => {
-          if (event.candidate) {
-            log("Sending ICE candidate...");
-            socket.emit("rtc:candidate", { candidate: event.candidate });
-          }
-        };
-
-        peerConnection.ontrack = (event) => {
-          if (event.streams[0]) {
-            remoteVideo.srcObject = event.streams[0];
-            remoteVideo.addEventListener('loadedmetadata', function onMetadataLoaded() {
-              remoteVideo.removeEventListener('loadedmetadata', onMetadataLoaded);
-              remoteVideo.play().catch((err) => {
-                log(`Error starting remote video playback: ${err.message}`);
-              });
-            });
-            log("Remote stream received.");
-            document.getElementById("remote-status").classList.remove("hidden");
-          }
-        };
-
-        log("WebRTC initialized.");
-      } catch (error) {
-        log("Error initializing WebRTC: " + error.message);
-        updateConnectionStatus("Waiting for other user");
-      }
-    }
-
-    function updateStatus() {
-      const videoTrack = localStream?.getVideoTracks()[0];
-      const audioTrack = localStream?.getAudioTracks()[0];
-
-      const status = {
-        cameraOn: videoTrack?.enabled ?? false,
-        audioOn: audioTrack?.enabled ?? false,
-      };
-
-      socket.emit("status:update", status);
-    }
-
-    function attemptReconnect(peerConnection, rtcConfig) {
-      if (peerConnection.restartIce) {
-        log("peerConnection.restartIce");
-        peerConnection.restartIce();
-      } else {
-        log("Re-Initialize WebRTC");
-        peerConnection.close();
-        initializeWebRTC();
-      }
-    }
-
-    startButton.addEventListener("click", async () => {
-      const username = usernameInput.value.trim();
-      const roomType = roomTypeInput.value;
-      const gender = genderInput.value;
-
-      if (!username) {
-        alert("Username is required!");
-        return;
-      }
-      if (!roomType) {
-        alert("roomType is required!");
-        return;
-      }
-      if (!gender) {
-        alert("gender is required!");
-        return;
-      }
-      user.username = username
-      user.roomType = roomType
-      user.gender = gender
-
-      usernameSection.classList.add("hidden");
-      videoSection.classList.remove("hidden");
-      document.getElementById("controls").classList.remove("hidden");
-
-      setInitials(localAvatar, username);
-      await getUserMedia();
-
-      log(`Hello, ${username}! Connecting to server...`);
-      updateConnectionStatus("Waiting for user to join...");
-
-      socket = io(LIVE_SERVER_URL, { query: user });
-
-      socket.on("connect", () => {
-        log("Connected to the server.");
-        socket.emit("room:join", { roomType });
-      });
-
-      socket.on("user:left", () => {
-        log("remote user left");
-        updateConnectionStatus("Waiting for user to join...");
-        setInitials(remoteAvatar, "");
-        
-        // Properly clean up the video element
-        if (remoteVideo.srcObject) {
-          // Stop all tracks
-          remoteVideo.srcObject.getTracks().forEach(track => track.stop());
-          remoteVideo.srcObject = null;
-        }
-        
-        document.getElementById("remote-status").classList.add("hidden");
-      });
-
-      socket.on("room:start_offerer", async (config) => {
-        if (!peerConnection) {
-          await initializeWebRTC();
-        }
-        log("Creating RTC offer...");
-        const offer = await peerConnection.createOffer({
-          iceRestart: true,
-          offerToReceiveAudio: true,
-          offerToReceiveVideo: true,
-        });
-        await peerConnection.setLocalDescription(offer);
-        socket.emit("rtc:offer", { offer });
-        log("RTC offer sent.");
-      });
-
-      socket.on("room:start", async (config) => {
-        rtcConfig = config;
-        await initializeWebRTC();
-      });
-      socket.on("user:joined", ({
-        socketId,
-        username,
-        gender,
-        roomId,
-        participants: newParticipants,
-      }) => {
-        participants = newParticipants;
-        const remoteUser = participants.find((_user) => _user.id !== user.id);
-        if (remoteUser?.username) {
-          setInitials(remoteAvatar, remoteUser.username);
-        }
-      });
-
-      socket.on("rtc:offer", async ({ offer }) => {
-        if (!peerConnection) {
-          await initializeWebRTC();
-        }
-        await peerConnection.setRemoteDescription(
-          new RTCSessionDescription(offer)
-        );
-
-        const answer = await peerConnection.createAnswer();
-        await peerConnection.setLocalDescription(answer);
-
-        socket.emit("rtc:answer", { answer });
-      });
-
-      socket.on("rtc:answer", async ({ answer }) => {
-        if (peerConnection) {
-          await peerConnection.setRemoteDescription(
-            new RTCSessionDescription(answer)
-          );
-        }
-      });
-
-      socket.on("rtc:candidate", async ({ candidate }) => {
-        if (peerConnection) {
-          await peerConnection.addIceCandidate(
-            new RTCIceCandidate(candidate)
-          );
-        }
-      });
-
-      socket.on("status:update", ({ userId, roomUsers }) => {
-        participants = roomUsers
-        const remoteUser = roomUsers.find((user) => user.id === userId);
-        if (!remoteUser) {
-          log("Remote User Not Found");
-          return;
-        }
-        log(`Camera On: ${remoteUser.cameraOn}, Audio On: ${remoteUser.audioOn}`);
-        remoteCameraStatus.textContent = `Camera: ${remoteUser.cameraOn ? "On" : "Off"}`;
-
-        remoteAudioStatus.textContent = `Microphone: ${remoteUser.audioOn ? "Unmuted" : "Muted"}`;
-
-        if (!remoteUser.cameraOn) {
-          remoteVideo.style.opacity = "0.5";
-        } else {
-          remoteVideo.style.opacity = "1";
-        }
-
-        setInitials(remoteAvatar, remoteUser.username);
-      });
-
-      socket.on("message:receive", (messages) => {
-        messagesContainer.innerHTML = ""
-        messages.forEach((message) => {
-          const { username, value } = message;
-          appendMessage(username, value);
-        });
-      });
-
-      socket.on("disconnect", () => {
-        log("Disconnected from the server.");
+      leaveRoomButton.addEventListener("click", () => {
+        socket?.emit("room:leave");
         if (peerConnection) peerConnection.close();
         peerConnection = null;
+        log("left the room.");
+        updateConnectionStatus("Waiting for user to join...");
+        setInitials(remoteAvatar, "");
+        document.getElementById("remote-status").classList.add("hidden");
+        remoteVideo.srcObject = undefined;
+
+        rtcConfig = {};
+        participants = [];
       });
-    });
 
-    function appendMessage(username, message) {
-      const messageEntry = document.createElement("div");
-      messageEntry.innerHTML = `<strong>${username}:</strong> ${message}`;
-      messagesContainer.appendChild(messageEntry);
-      messagesContainer.scrollTop = messagesContainer.scrollHeight;
-    }
+      function updateConnectionStatus(status) {
+        statusText.textContent = status;
+      }
 
-    toggleCameraButton.addEventListener("click", () => {
-      if (localStream) {
-        const videoTrack = localStream.getVideoTracks()[0];
-        if (videoTrack) {
-          videoTrack.enabled = !videoTrack.enabled;
-          toggleCameraButton.textContent = videoTrack.enabled
-            ? "Turn Off Camera"
-            : "Turn On Camera";
+      function log(message) {
+        const entry = document.createElement("div");
+        entry.className = "log-entry";
+        entry.textContent = message;
+        logContainer.appendChild(entry);
+        logContainer.scrollTop = logContainer.scrollHeight;
+      }
+
+      function setInitials(element, name) {
+        const initials = name
+          .split(" ")
+          .map((n) => n[0])
+          .join("")
+          .toUpperCase();
+        element.textContent = initials;
+      }
+
+      async function getUserMedia() {
+        try {
+          log("Accessing local media...");
+          localStream = await navigator.mediaDevices.getUserMedia(
+            mediaConstraints,
+          );
+          localVideo.srcObject = localStream;
+          // Wait for metadata to load before playing
+          localVideo.addEventListener(
+            "loadedmetadata",
+            function onMetadataLoaded() {
+              localVideo.removeEventListener(
+                "loadedmetadata",
+                onMetadataLoaded,
+              );
+              localVideo.play().catch((err) => {
+                log(`Error starting local video playback: ${err.message}`);
+              });
+            },
+          );
+          log("Local media stream added.");
+        } catch (error) {
+          log("Error getting User Media: " + error.message);
         }
       }
-      updateStatus();
-    });
 
-    toggleAudioButton.addEventListener("click", () => {
-      if (localStream) {
-        const audioTrack = localStream.getAudioTracks()[0];
-        if (audioTrack) {
-          audioTrack.enabled = !audioTrack.enabled;
-          toggleAudioButton.textContent = audioTrack.enabled ? "Mute" : "Unmute";
+      async function initializeWebRTC() {
+        try {
+          updateConnectionStatus("Connecting to the other user...");
+          log("Creating RTCPeerConnection...");
+          peerConnection = new RTCPeerConnection(rtcConfig);
+
+          peerConnection.onconnectionstatechange = () => {
+            if (peerConnection.connectionState === "connected") {
+              updateConnectionStatus("Connected");
+            }
+          };
+
+          peerConnection.oniceconnectionstatechange = () => {
+            if (peerConnection.iceConnectionState === "disconnected") {
+              log("Disconnected. Attempting to reconnect...");
+              attemptReconnect(peerConnection, rtcConfig);
+            }
+          };
+
+          localStream.getTracks().forEach((track) => {
+            peerConnection.addTrack(track, localStream);
+          });
+
+          peerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+              log("Sending ICE candidate...");
+              socket.emit("rtc:candidate", { candidate: event.candidate });
+            }
+          };
+
+          peerConnection.ontrack = (event) => {
+            if (event.streams[0]) {
+              remoteVideo.srcObject = event.streams[0];
+              remoteVideo.addEventListener(
+                "loadedmetadata",
+                function onMetadataLoaded() {
+                  remoteVideo.removeEventListener(
+                    "loadedmetadata",
+                    onMetadataLoaded,
+                  );
+                  remoteVideo.play().catch((err) => {
+                    log(`Error starting remote video playback: ${err.message}`);
+                  });
+                },
+              );
+              log("Remote stream received.");
+              document
+                .getElementById("remote-status")
+                .classList.remove("hidden");
+            }
+          };
+
+          log("WebRTC initialized.");
+        } catch (error) {
+          log("Error initializing WebRTC: " + error.message);
+          updateConnectionStatus("Waiting for other user");
         }
       }
-      updateStatus();
-    });
 
-    sendMessageButton.addEventListener("click", () => {
-      const message = messageInput.value.trim();
-      if (message) {
-        socket.emit("message:send", { message });
-        messageInput.value = "";
+      function updateStatus() {
+        const videoTrack = localStream?.getVideoTracks()[0];
+        const audioTrack = localStream?.getAudioTracks()[0];
+
+        const status = {
+          cameraOn: videoTrack?.enabled ?? false,
+          audioOn: audioTrack?.enabled ?? false,
+        };
+
+        socket.emit("status:update", status);
       }
-    });
 
-    messageInput.addEventListener("keypress", (event) => {
-      if (event.key === "Enter") sendMessageButton.click();
-    });
-  </script>
-</body>
+      function attemptReconnect(peerConnection, rtcConfig) {
+        if (peerConnection.restartIce) {
+          log("peerConnection.restartIce");
+          peerConnection.restartIce();
+        } else {
+          log("Re-Initialize WebRTC");
+          peerConnection.close();
+          initializeWebRTC();
+        }
+      }
 
+      startButton.addEventListener("click", async () => {
+        const username = usernameInput.value.trim();
+        const roomType = roomTypeInput.value;
+        const gender = genderInput.value;
+
+        if (!username) {
+          alert("Username is required!");
+          return;
+        }
+        if (!roomType) {
+          alert("roomType is required!");
+          return;
+        }
+        if (!gender) {
+          alert("gender is required!");
+          return;
+        }
+        user.username = username;
+        user.roomType = roomType;
+        user.gender = gender;
+
+        usernameSection.classList.add("hidden");
+        videoSection.classList.remove("hidden");
+        document.getElementById("controls").classList.remove("hidden");
+
+        setInitials(localAvatar, username);
+        await getUserMedia();
+
+        log(`Hello, ${username}! Connecting to server...`);
+        updateConnectionStatus("Waiting for user to join...");
+
+        socket.on("connect", () => {
+          log("Connected to the server.");
+          socket.emit("room:join", { roomType });
+        });
+
+        socket.on("user:left", () => {
+          log("remote user left");
+          updateConnectionStatus("Waiting for user to join...");
+          setInitials(remoteAvatar, "");
+
+          // Properly clean up the video element
+          if (remoteVideo.srcObject) {
+            // Stop all tracks
+            remoteVideo.srcObject.getTracks().forEach((track) => track.stop());
+            remoteVideo.srcObject = null;
+          }
+
+          document.getElementById("remote-status").classList.add("hidden");
+        });
+
+        socket.on("room:start_offerer", async (config) => {
+          if (!peerConnection) {
+            await initializeWebRTC();
+          }
+          log("Creating RTC offer...");
+          const offer = await peerConnection.createOffer({
+            iceRestart: true,
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: true,
+          });
+          await peerConnection.setLocalDescription(offer);
+          socket.emit("rtc:offer", { offer });
+          log("RTC offer sent.");
+        });
+
+        socket.on("room:start", async (config) => {
+          rtcConfig = config;
+          await initializeWebRTC();
+        });
+        socket.on(
+          "user:joined",
+          ({
+            socketId,
+            username,
+            gender,
+            roomId,
+            participants: newParticipants,
+          }) => {
+            participants = newParticipants;
+            const remoteUser = participants.find(
+              (_user) => _user.id !== user.id,
+            );
+            if (remoteUser?.username) {
+              setInitials(remoteAvatar, remoteUser.username);
+            }
+          },
+        );
+
+        socket.on("rtc:offer", async ({ offer }) => {
+          if (!peerConnection) {
+            await initializeWebRTC();
+          }
+          await peerConnection.setRemoteDescription(
+            new RTCSessionDescription(offer),
+          );
+
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+
+          socket.emit("rtc:answer", { answer });
+        });
+
+        socket.on("rtc:answer", async ({ answer }) => {
+          if (peerConnection) {
+            await peerConnection.setRemoteDescription(
+              new RTCSessionDescription(answer),
+            );
+          }
+        });
+
+        socket.on("rtc:candidate", async ({ candidate }) => {
+          if (peerConnection) {
+            await peerConnection.addIceCandidate(
+              new RTCIceCandidate(candidate),
+            );
+          }
+        });
+
+        socket.on("status:update", ({ userId, roomUsers }) => {
+          participants = roomUsers;
+          const remoteUser = roomUsers.find((user) => user.id === userId);
+          if (!remoteUser) {
+            log("Remote User Not Found");
+            return;
+          }
+          log(
+            `Camera On: ${remoteUser.cameraOn}, Audio On: ${remoteUser.audioOn}`,
+          );
+          remoteCameraStatus.textContent = `Camera: ${
+            remoteUser.cameraOn ? "On" : "Off"
+          }`;
+
+          remoteAudioStatus.textContent = `Microphone: ${
+            remoteUser.audioOn ? "Unmuted" : "Muted"
+          }`;
+
+          if (!remoteUser.cameraOn) {
+            remoteVideo.style.opacity = "0.5";
+          } else {
+            remoteVideo.style.opacity = "1";
+          }
+
+          setInitials(remoteAvatar, remoteUser.username);
+        });
+
+        socket.on("message:receive", (messages) => {
+          messagesContainer.innerHTML = "";
+          messages.forEach((message) => {
+            const { username, value } = message;
+            appendMessage(username, value);
+          });
+        });
+
+        socket.on("disconnect", () => {
+          log("Disconnected from the server.");
+          if (peerConnection) peerConnection.close();
+          peerConnection = null;
+        });
+      });
+
+      function appendMessage(username, message) {
+        const messageEntry = document.createElement("div");
+        messageEntry.innerHTML = `<strong>${username}:</strong> ${message}`;
+        messagesContainer.appendChild(messageEntry);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      }
+
+      toggleCameraButton.addEventListener("click", () => {
+        if (localStream) {
+          const videoTrack = localStream.getVideoTracks()[0];
+          if (videoTrack) {
+            videoTrack.enabled = !videoTrack.enabled;
+            toggleCameraButton.textContent = videoTrack.enabled
+              ? "Turn Off Camera"
+              : "Turn On Camera";
+          }
+        }
+        updateStatus();
+      });
+
+      toggleAudioButton.addEventListener("click", () => {
+        if (localStream) {
+          const audioTrack = localStream.getAudioTracks()[0];
+          if (audioTrack) {
+            audioTrack.enabled = !audioTrack.enabled;
+            toggleAudioButton.textContent = audioTrack.enabled
+              ? "Mute"
+              : "Unmute";
+          }
+        }
+        updateStatus();
+      });
+
+      sendMessageButton.addEventListener("click", () => {
+        const message = messageInput.value.trim();
+        if (message) {
+          socket.emit("message:send", { message });
+          messageInput.value = "";
+        }
+      });
+
+      messageInput.addEventListener("keypress", (event) => {
+        if (event.key === "Enter") sendMessageButton.click();
+      });
+    </script>
+  </body>
 </html>

@@ -1,5 +1,7 @@
 import cluster from "cluster";
+import fs from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import path from "node:path";
 import express, {
   type NextFunction,
@@ -27,17 +29,32 @@ if (cluster.isPrimary) {
 
 function startMainApp() {
   const app = express();
-  const server = new Turn({
-    authMech: "long-term",
-    listeningPort: 3478,
-    credentials: {
-      username: "password",
-    },
-  });
-  server.on("relay", (data) => {
-    console.log("Relay request:", data);
-  });
-  server.start();
+
+  // Set up TURN server with better error handling
+  try {
+    const server = new Turn({
+      authMech: "long-term",
+      listeningPort: 3478,
+      credentials: {
+        username: "password",
+      },
+    });
+
+    server.on("error", (err) => {
+      console.error("TURN server error:", err);
+    });
+
+    server.on("relay", (data) => {
+      console.log("Relay request:", data);
+    });
+
+    server.start();
+    console.log("TURN server started successfully on port 3478");
+  } catch (error) {
+    console.error("Failed to start TURN server:", error);
+  }
+
+  // Set up authentication
   const basic = auth.basic(
     { realm: "Monitor Area" },
     (user, pass, callback) => {
@@ -46,6 +63,7 @@ function startMainApp() {
       );
     },
   );
+
   const monitorAuthMiddleware = (
     req: Request,
     res: Response,
@@ -59,11 +77,74 @@ function startMainApp() {
       next();
     })(req, res);
   };
-  const httpServer = http.createServer(app);
 
+  let httpServer: http.Server | https.Server;
+
+  // Try to use HTTPS if certificates exist, otherwise fall back to HTTP
+  try {
+    // Check if certificate files exist before trying to read them
+    const keyPath = path.join(__dirname, "security/key.pem");
+    const certPath = path.join(__dirname, "security/cert.pem");
+
+    if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
+      const httpsOptions = {
+        key: fs.readFileSync(keyPath),
+        cert: fs.readFileSync(certPath),
+      };
+      httpServer = https.createServer(httpsOptions, app);
+      console.log("HTTPS server created successfully");
+    } else {
+      throw new Error("SSL certificate files not found");
+    }
+  } catch (error) {
+    console.error("Error creating HTTPS server:", error);
+    console.log("Falling back to HTTP (WebRTC may not work on mobile devices)");
+    httpServer = http.createServer(app);
+
+    // Update WebRTC config to include more TURN servers for HTTP fallback
+    const additionalServers = [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      {
+        urls: ENV.ICE_SERVER_URL,
+        credential: "password",
+        username: "username",
+      },
+      {
+        urls: "turn:numb.viagenie.ca",
+        credential: "muazkh",
+        username: "webrtc@live.com",
+      },
+      {
+        urls: "turn:turn.anyfirewall.com:443?transport=tcp",
+        credential: "webrtc",
+        username: "webrtc",
+      },
+    ];
+
+    // Add each server individually using for...of instead of forEach
+    for (const server of additionalServers) {
+      webrtcManager.addIceServer(server);
+    }
+
+    console.log("Added additional ICE servers for HTTP mode");
+  }
+
+  // Set up middleware and routes
   app.use(express.static(path.join(__dirname, "public")));
   app.set("view engine", "ejs");
   app.set("views", path.join(__dirname, "views"));
+
+  // Add middleware to force HTTPS in production
+  if (ENV.NODE_ENV === "production") {
+    app.use((req, res, next) => {
+      if (req.headers["x-forwarded-proto"] !== "https") {
+        return res.redirect(`https://${req.headers.host}${req.url}`);
+      }
+      next();
+    });
+  }
+
   app.get("/", monitorAuthMiddleware, (req, res) => {
     res.render("index");
   });
@@ -111,11 +192,15 @@ function startMainApp() {
   });
 
   app.get("/client", monitorAuthMiddleware, (req, res) => {
+    // Pass the protocol to the client
+    const protocol = req.secure ? "https" : "http";
     res.render("client", {
       LIVE_SERVER_URL: ENV.LIVE_SERVER_URL,
       type: RoomType,
+      protocol: protocol,
     });
   });
+
   app.get("/monitor", monitorAuthMiddleware, (req, res) => {
     const allRooms = Array.from(rooms.rooms.values()).map((room) => {
       const participants = Array.from(room.participants).map((socketId) => {
@@ -137,9 +222,21 @@ function startMainApp() {
 
     res.render("rooms", { rooms: allRooms });
   });
+
+  // Connect socket manager
   socketManager.connect(httpServer);
 
+  // Start the server
   httpServer.listen(ENV.SOCKET_PORT, () => {
     console.log(`Server started on port ${ENV.SOCKET_PORT}`);
+    console.log(`Server running in ${ENV.NODE_ENV} mode`);
+    console.log(
+      `Using ${httpServer instanceof https.Server ? "HTTPS" : "HTTP"}`,
+    );
+    console.log(
+      `ICE Servers configured: ${
+        webrtcManager.getRtcConfig().iceServers?.length || 0
+      }`,
+    );
   });
 }
