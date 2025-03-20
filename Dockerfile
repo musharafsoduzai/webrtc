@@ -9,11 +9,11 @@ COPY package*.json ./
 # Install dependencies
 RUN npm install
 
-# Copy the entire project (including the security folder with SSL certificates)
+# Copy the entire project (including the security folder)
 COPY . .
 
-# Explicitly copy the security folder to ensure SSL certificates are included
-COPY security /app/security
+# Explicitly copy the security folder from src/
+COPY src/security /app/security
 
 # Ensure the security folder exists inside the container
 RUN mkdir -p /app/security
