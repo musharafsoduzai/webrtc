@@ -74,11 +74,11 @@ function startMainApp() {
     console.log("HTTPS server created successfully");
   } catch (error) {
     console.log(
-      "SSL certificates not found, falling back to HTTP (WebRTC may not work on mobile devices)"
+      "SSL certificates not found, falling back to HTTP (WebRTC may not work on mobile devices)",
     );
     httpServer = http.createServer(app);
   }
-  
+
   app.use(express.static(path.join(__dirname, "public")));
   app.set("view engine", "ejs");
   app.set("views", path.join(__dirname, "views"));
