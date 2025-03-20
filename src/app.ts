@@ -1,7 +1,5 @@
 import cluster from "cluster";
-import fs from "node:fs";
 import http from "node:http";
-import https from "node:https";
 import path from "node:path";
 import express, {
   type NextFunction,
@@ -61,23 +59,7 @@ function startMainApp() {
       next();
     })(req, res);
   };
-
-  let httpServer: http.Server | https.Server;
-
-  // Try to use HTTPS if certificates exist, otherwise fall back to HTTP
-  try {
-    const httpsOptions = {
-      key: fs.readFileSync(path.join(__dirname, "security/key.pem")),
-      cert: fs.readFileSync(path.join(__dirname, "security/cert.pem")),
-    };
-    httpServer = https.createServer(httpsOptions, app);
-    console.log("HTTPS server created successfully");
-  } catch (error) {
-    console.log(
-      "SSL certificates not found, falling back to HTTP (WebRTC may not work on mobile devices)",
-    );
-    httpServer = http.createServer(app);
-  }
+  const httpServer = http.createServer(app);
 
   app.use(express.static(path.join(__dirname, "public")));
   app.set("view engine", "ejs");
